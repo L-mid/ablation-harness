@@ -1,0 +1,19 @@
+
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Tests: pytest -q",
+      "type": "shell",
+      "command": "pytest -q",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Ablate: baseline",
+      "type": "shell",
+      "command": "python -m ablation_harness.ablate -c experiments/baseline.yaml",
+      "problemMatcher": []
+    }
+  ]
+}

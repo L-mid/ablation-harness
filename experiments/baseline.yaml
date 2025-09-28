@@ -1,0 +1,6 @@
+seeds: [0, 1, 2, 3]
+experiments:
+  - name: baseline
+    n_samples: 1000
+  - name: bigger
+    n_samples: 3000

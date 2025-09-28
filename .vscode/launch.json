@@ -1,0 +1,16 @@
+
+
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Ablate: baseline.yaml",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ablation_harness.ablate",
+      "args": ["-c", "experiments/baseline.yaml"],
+      "cwd": "${workspaceFolder}",
+      "justMyCode": true
+    }
+  ]
+}
