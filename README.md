@@ -7,3 +7,5 @@ Quickstart:
     pip install -e .[dev]
     pre-commit install
     python -m ablation_harness.ablate -c experiments/baseline.yaml
+
+![CI](https://github.com/l-mid/ablation-harness/actions/workflows/ci.yml/badge.svg?branch=main)
