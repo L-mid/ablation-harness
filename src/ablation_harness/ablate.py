@@ -20,6 +20,9 @@ python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir run
 
 pytest -q tests/test_ablate_smoke.py -k smoke
 
+
+pip install -e ".[dev,torch-cpu]"
+
 """
 
 
