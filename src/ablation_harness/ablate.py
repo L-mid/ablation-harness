@@ -1,115 +1,127 @@
 import argparse
+import csv
+import importlib
+import itertools
 import json
-import pathlib
+import os
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
-import matplotlib.pyplot as plt
-import numpy as np
-from omegaconf import OmegaConf
+import yaml
 
-from ablation_harness.seed_utils import set_seed
+"""
+running calls:
 
+Teir 1 (synthetic)
+python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs/moons
 
-@dataclass
-class Experiment:
-    name: str
-    n_samples: int = 1000
+Teir 2 (tiny real)
+python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
-
-def run_one(exp: Experiment, seed: int) -> Dict[str, Any]:
-    set_seed(seed)
-    x = np.random.randn(exp.n_samples)
-    loss = float(np.mean(np.abs(x)))
-    return {"config_name": exp.name, "seed": seed, "metrics": {"dummy_loss": loss}}
+pytest -q tests/test_ablate_smoke.py -k smoke
 
 
-def load_cfg(path: str):
-    cfg = OmegaConf.load(path)
-    exps = [Experiment(**e) for e in cfg.experiments]
-    seeds = list(cfg.seeds)
-    return exps, seeds
+pip install -e ".[dev,torch-cpu]"
+
+"""
 
 
-def aggregate(rows: List[Dict[str, Any]]):
-    by = {}
-    for r in rows:
-        by.setdefault(r["config_name"], []).append(r["metrics"]["dummy_loss"])
-    table = []
-    for k, v in by.items():
-        import numpy as np
-
-        arr = np.array(v, float)
-        table.append((k, float(arr.mean()), float(arr.std(ddof=1)), len(arr)))
-    table.sort()
-    return table
+def cartesian_grid(base: Dict[str, Any], grid: Dict[str, List[Any]]) -> List[Dict[str, Any]]:
+    keys = list(grid.keys())
+    vals = [grid[k] for k in keys]
+    runs = []
+    for combo in itertools.product(*vals):
+        cfg = dict(base)
+        for k, v in zip(keys, combo):
+            cfg[k] = v
+        runs.append(cfg)
+    return runs
 
 
-def write_report(table, out_dir: pathlib.Path):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    md = ["# Ablation Report", "", "| config | mean | std | n |", "|---|---:|---:|---:|"]
-    for name, mean, std, n in table:
-        md.append(f"| {name} | {mean:.6f} | {std:.6f} | {n} |")
-    (out_dir / "ablate.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+def load_yaml(path: str) -> Dict[str, Any]:  # here
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
-def plot_seed_variance(rows: List[Dict[str, Any]], out_dir: pathlib.Path):
-    out_dir.mkdir(parents=True, exist_ok=True)
-    by = {}
-    for r in rows:
-        by.setdefault(r["config_name"], []).append(r["metrics"]["dummy_loss"])
-    for name, vals in by.items():
-        plt.figure()
-        plt.title(f"Seed variance: {name}")
-        plt.plot(vals, marker="o")
-        plt.xlabel("seed idx")
-        plt.ylabel("dummy_loss")
-        plt.tight_layout()
-        (out_dir / f"seed_variance_{name}.png").parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(out_dir / f"seed_variance_{name}.png", dpi=150)
-        plt.close()
+def main():
 
+    import torch
 
-def main(argv=None):
+    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "2")))
+
     p = argparse.ArgumentParser()
-    p.add_argument("-c", "--config", required=True, help="Path to experiments YAML")
-    p.add_argument("--out", default=None, help="Runs dir (default: runs/<ts>)")
-    p.add_argument("--append", action="store_true", help="Append instead of overwrite.")
-    args = p.parse_args(argv)
+    p.add_argument("--config", required=True, help="YAML with base/grid/metric/goal")
+    p.add_argument(
+        "--trainer", default="ablation_harness.trainer", help="Module with run(config_dict)->dict"
+    )
+    p.add_argument("--out_dir", default="runs/ablation", help="Output directory")
+    args = p.parse_args()
 
-    exps, seeds = load_cfg(args.config)
-    ts = time.strftime("%Y%m%d-%H%M%S")
-    import os
+    os.makedirs(args.out_dir, exist_ok=True)
+    spec = load_yaml(args.config)  # here (more likely)
 
-    run_id = f"{ts}-{os.getpid()}"
-    runs_dir = pathlib.Path(args.out) if args.out else pathlib.Path("runs") / f"ablate-{ts}"
-    reports_dir = pathlib.Path("reports")
-    plots_dir = reports_dir / "plots"
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    base = spec.get("base", {})
+    grid = spec.get("grid", {})
+    metric = spec.get("metric", "val/acc")
+    goal = spec.get("goal", "max")  # "max" or "min"
 
-    results_path = runs_dir / "results.jsonl"
-    rows = []
-    t0 = time.time()
-    for e in exps:
-        for s in seeds:
-            r = run_one(e, s)
-            r["run_id"] = run_id
-            r["elapsed_sec"] = round(time.time() - t0, 4)
-            r["timestamp"] = ts
-            rows.append(r)
+    runs = cartesian_grid(base, grid) if grid else [base]
+    print(f"[ablate.py] {len(runs)} runs")
 
-    mode = "a" if args.append else "w"
-    with results_path.open(mode, encoding="utf-8", newline="\n") as f:
-        for r in rows:
-            f.write(json.dumps(r) + "\n")
+    trainer_mod = importlib.import_module(args.trainer)  # cannot find 'trainer' module
+    run_fn: Callable[[dict[str, Any]], dict[str, Any]] = getattr(trainer_mod, "run")
 
-    table = aggregate(rows)
-    write_report(table, reports_dir)
-    plot_seed_variance(rows, plots_dir)
-    print(f"Wrote {results_path} and reports/ablate.md")
-    return 0
+    results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    jsonl_path = os.path.join(args.out_dir, "results.jsonl")
+    csv_path = os.path.join(args.out_dir, "summary.csv")
+
+    with open(jsonl_path, "w", encoding="utf-8") as jf:
+        for i, cfg in enumerate(runs):
+            t0 = time.time()
+            out: Dict[str, Any]
+            try:
+                out = run_fn(cfg)
+            except Exception as e:
+                out = {"error": str(e)}
+            out["_elapsed_sec"] = round(time.time() - t0, 3)
+            rec = {"cfg": cfg, "out": out, "_i": i}
+            jf.write(json.dumps(rec) + "\n")
+            results.append((cfg, out))
+            print(
+                (
+                    f"[{i+1}/{len(runs)}] {cfg} -> {out.get(metric, 'NA')} "
+                    f"({out.get('_elapsed_sec', '?')}s)"
+                )
+            )
+
+    # Rank
+    def score_fn(o: Dict[str, Any]) -> float:
+        v = o.get(metric, None)
+        if v is None:
+            return float("-inf") if goal == "max" else float("inf")
+        return float(v)
+
+    sorted_rows = sorted(
+        results,
+        key=lambda co: score_fn(co[1]),
+        reverse=(goal == "max"),
+    )
+
+    # Write CSV summary
+    fieldnames = list(sorted(set(k for cfg, _ in results for k in cfg.keys())))
+    with open(csv_path, "w", newline="", encoding="utf-8") as cf:
+        w = csv.writer(cf)
+        header = ["rank", metric, "_elapsed_sec"] + fieldnames
+        w.writerow(header)
+        for rank, (cfg, out) in enumerate(sorted_rows, 1):
+            row = [rank, out.get(metric), out.get("_elapsed_sec")] + [
+                cfg.get(k) for k in fieldnames
+            ]
+            w.writerow(row)
+
+    print(f"[ablate.py] Wrote {jsonl_path}")
+    print(f"[ablate.py] Wrote {csv_path}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

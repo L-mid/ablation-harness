@@ -4,10 +4,30 @@ version = "0.1.0"
 description = "Ablation harness + reproducibility template"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26","omegaconf>=2.3","matplotlib>=3.8"]
+dependencies = [
+    "numpy>=1.26",
+    "omegaconf>=2.3",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8"
+    ]
+
+[project.scripts]
+ablate = "ablation_harness.ablate:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.2","pytest-cov>=5.0","pre-commit>=3.7","ruff>=0.5","black>=24.8","isort>=5.13"]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "pre-commit>=3.7",
+    "ruff>=0.5",
+    "black>=24.8",
+    "isort>=5.13"
+    ]
+
+torch-cpu = [
+    "torch>=2.3", "torchvision>=0.18", "torchaudio>=2.3"
+]
+
 
 [tool.pytest.ini_options]
 addopts = "-q"
@@ -22,3 +42,4 @@ profile = "black"
 [tool.ruff]
 line-length = 100
 lint.select = ["E","F","C90"]
+lint.ignore = ["F841"]

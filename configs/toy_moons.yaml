@@ -1,0 +1,19 @@
+
+# no idea how this goes into trainer.py. but it does
+
+base:
+  model: "mlp"
+  epochs: 4
+  batch_size: 64
+  dataset: "moons"
+
+
+grid:
+  hidden: [16, 64, 128]
+  dropout: [0.0, 0.5]
+  lr: [0.01, 0.001]
+  wd: [0.0, 0.0001]
+  seed: [0, 1]
+
+metric: "val/acc"
+goal: "max"     # higher is better
