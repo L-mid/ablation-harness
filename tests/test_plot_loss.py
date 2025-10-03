@@ -8,6 +8,9 @@ Covers:
 - --ylim enforcement + summary printing (import module, no subprocess)
 - Auto-zoom behavior for nearly-flat series (import module)
 
+
+UNTESTED for csv input outside these tests.
+
 """
 
 import csv

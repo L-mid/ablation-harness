@@ -21,10 +21,18 @@ python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir run
 
 pytest -q
 
-python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # should make no dirs. works with toy_moons
+python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # should make no dirs. works with toy_moons, no seeding
 
 
 for installation: pip install -e ".[dev,torch-cpu]"
+
+
+seed precedence rule:
+    If --seed is provided → use that seed only (remove grid.seed).
+    Else if grid.seed exists → sweep those seeds.
+    Else use base.seed (default).
+
+    python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny --seed 799
 
 """
 
@@ -57,6 +65,7 @@ def main():  # noqa: C901
     p.add_argument("--trainer", default="ablation_harness.trainer", help="Module with run(config_dict)->dict")
     p.add_argument("--dry-run", action="store_true", help="Plan and validate only; no writes/training")
     p.add_argument("--out_dir", default="runs/ablation", help="Output directory")
+    p.add_argument("--seed", type=int, default=None, help="Override seed for a single run")
     args = p.parse_args()
     spec = load_yaml(args.config)
 
@@ -65,7 +74,15 @@ def main():  # noqa: C901
     metric = spec.get("metric", "val/acc")
     goal = spec.get("goal", "max")  # "max" or "min"
 
+    if args.seed is not None:
+        eprint("seed(s):", args.seed)
+        spec["base"]["seed"] = args.seed
+        # If user asked for a single seed, don't also sweep seeds from YAML:
+        if "grid" in spec and "seed" in spec["grid"]:
+            del spec["grid"]["seed"]
+
     runs = cartesian_grid(base, grid) if grid else [base]
+
     eprint(f"[ablate.py] {len(runs)} runs")
 
     trainer_mod = importlib.import_module(args.trainer)

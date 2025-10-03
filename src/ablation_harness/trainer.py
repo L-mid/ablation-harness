@@ -1,14 +1,13 @@
-import random
+import os
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from ablation_harness.seed_utils import seed_everything, seed_worker
+from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
 
 try:
     import torchvision as tv
@@ -42,13 +41,6 @@ class TrainConfig:
 # --------------------------
 # Utils
 # --------------------------
-
-
-def _set_seed(s: int):  # unused because seed_utils.py
-    random.seed(s)
-    np.random.seed(s)
-    torch.manual_seed(s)
-    torch.cuda.manual_seed_all(s)
 
 
 def device():
@@ -182,11 +174,18 @@ def _evaluate(model, loader, crit, dev):
 
 def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
     cfg = cfg
-    seed_everything(cfg.seed)
+    global_seed = cfg.seed
+
+    rank = int(os.environ.get("RANK", 0))
+    process_seed = global_seed + rank
+    seed_everything(cfg.seed, deterministic=getattr(cfg, "deterministic", True))
+    seed_everything(process_seed, deterministic=getattr(cfg, "deterministic", True))
+
+    g = make_generator(process_seed)
+
     dev = device()
 
     # seeding dataloader + workers:
-    g = seed_everything(1337)
 
     # --- Data ---
     if cfg.dataset == "moons":
@@ -259,6 +258,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
         best_val = max(best_val, last_val["acc"])
 
     return {
+        "seed": cfg.seed,
         "val/acc": float(best_val),
         "val/loss": float(last_val.get("loss", 0.0)),
         "params": int(sum(p.numel() for p in model.parameters())),
@@ -274,7 +274,7 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Entry used by ablate.py -- keep this signature stable.
     """
-    # Fill defualts via dataclass; allow unknown kets to override if present.
+    # Fill defualts via dataclass; allow unknown keys to override if present.
     cfg = TrainConfig(**{**TrainConfig().__dict__, **config_dict})
     return train_and_eval(cfg)
 
