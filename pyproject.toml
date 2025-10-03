@@ -21,8 +21,7 @@ dev = [
     "pre-commit>=3.7",
     "ruff>=0.5",
     "black>=24.8",
-    "isort>=5.13"
-    "commitizen>=0",
+    "isort>=5.13",
     ]
 
 torch-cpu = [
