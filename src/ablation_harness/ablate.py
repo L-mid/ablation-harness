@@ -4,6 +4,7 @@ import importlib
 import itertools
 import json
 import os
+import sys
 import time
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -18,10 +19,12 @@ python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs
 Teir 2 (tiny real)
 python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
-pytest -q tests/test_ablate_smoke.py -k smoke
+pytest -q
+
+python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # should make no dirs. works with toy_moons
 
 
-pip install -e ".[dev,torch-cpu]"
+for installation: pip install -e ".[dev,torch-cpu]"
 
 """
 
@@ -43,22 +46,19 @@ def load_yaml(path: str) -> Dict[str, Any]:  # here
         return yaml.safe_load(f)
 
 
-def main():
+def eprint(*a, **k):
+    print(*a, **k, file=sys.stderr)
 
-    import torch
 
-    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "2")))
+def main():  # noqa: C901
 
     p = argparse.ArgumentParser()
     p.add_argument("--config", required=True, help="YAML with base/grid/metric/goal")
-    p.add_argument(
-        "--trainer", default="ablation_harness.trainer", help="Module with run(config_dict)->dict"
-    )
+    p.add_argument("--trainer", default="ablation_harness.trainer", help="Module with run(config_dict)->dict")
+    p.add_argument("--dry-run", action="store_true", help="Plan and validate only; no writes/training")
     p.add_argument("--out_dir", default="runs/ablation", help="Output directory")
     args = p.parse_args()
-
-    os.makedirs(args.out_dir, exist_ok=True)
-    spec = load_yaml(args.config)  # here (more likely)
+    spec = load_yaml(args.config)
 
     base = spec.get("base", {})
     grid = spec.get("grid", {})
@@ -66,15 +66,79 @@ def main():
     goal = spec.get("goal", "max")  # "max" or "min"
 
     runs = cartesian_grid(base, grid) if grid else [base]
-    print(f"[ablate.py] {len(runs)} runs")
+    eprint(f"[ablate.py] {len(runs)} runs")
 
-    trainer_mod = importlib.import_module(args.trainer)  # cannot find 'trainer' module
+    trainer_mod = importlib.import_module(args.trainer)
     run_fn: Callable[[dict[str, Any]], dict[str, Any]] = getattr(trainer_mod, "run")
+    preflight_fn = getattr(trainer_mod, "preflight")
 
-    results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
+    plan = {
+        "run_count": len(runs),
+        "metric": metric,
+        "goal": goal,
+        "out_dir": args.out_dir,
+        "runs": [],
+    }
+
+    # dry run exclusives
+
+    def _diff(base, cfg):
+        return {k: v for k, v in cfg.items() if base.get(k) != v}
+
+    def _grid_cardinality(runs):
+        from collections import defaultdict
+
+        vals = defaultdict(set)
+        for r in runs:
+            for k, v in r["cfg"].items():
+                vals[k].add(v)
+        return {k: len(vs) for k, vs in vals.items()}
+
+    def _print_summary(plan, top=10, errors_only=False):
+        runs = plan["runs"]
+        errs = [r for r in runs if (r.get("preflight") or {}).get("ok") is False]
+        oks = [r for r in runs if (r.get("preflight") or {}).get("ok") is not False]
+        eprint(f"DRY-RUN 'OK!'  runs={len(runs)}  ok={len(oks)}  errors={len(errs)}")
+        eprint(f"metric={plan['metric']}  goal={plan['goal']}")
+        eprint(f"out_dir={plan['out_dir']}")
+        eprint("grid:", _grid_cardinality(runs))
+        base = runs[0]["cfg"] if runs else {}
+        to_show = errs if errors_only else runs[:top]
+        for r in to_show:
+            pf = r.get("preflight") or {}
+            eprint(f"[{r['i']:>3}] diff={_diff(base, r['cfg'])}  pf_ok={pf.get('ok', 'NA')}  params={pf.get('params','?')}")
+
+    # If DRY-RUN: build a plan and optionally ask trainer to preflight each cfg
+    if args.dry_run:
+        for i, cfg in enumerate(runs):
+            entry = {
+                "i": i,
+                "cfg": cfg,
+                "planned_artifacts": [
+                    os.path.join(args.out_dir, "results.jsonl"),
+                    os.path.join(args.out_dir, "summary.csv"),
+                ],
+                "preflight": None,
+            }
+            try:
+                entry["preflight"] = preflight_fn({**cfg, "dry_run": True})
+            except Exception as e:
+                entry["preflight"] = {"ok": False, "error": str(e)}
+            plan["runs"].append(entry)
+        # IMPORTANT: not makedirs, no writes
+
+        print(json.dumps(plan, indent=2))  # prints the full dict
+        _print_summary(plan)  # prints dict summary
+
+        # exit nonzero if any error
+        bad = any((r.get("preflight") or {}).get("ok") is False for r in plan["runs"])
+        raise SystemExit(2 if bad else 0)
+
+    os.makedirs(args.out_dir, exist_ok=True)
     jsonl_path = os.path.join(args.out_dir, "results.jsonl")
     csv_path = os.path.join(args.out_dir, "summary.csv")
 
+    results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     with open(jsonl_path, "w", encoding="utf-8") as jf:
         for i, cfg in enumerate(runs):
             t0 = time.time()
@@ -87,12 +151,7 @@ def main():
             rec = {"cfg": cfg, "out": out, "_i": i}
             jf.write(json.dumps(rec) + "\n")
             results.append((cfg, out))
-            print(
-                (
-                    f"[{i+1}/{len(runs)}] {cfg} -> {out.get(metric, 'NA')} "
-                    f"({out.get('_elapsed_sec', '?')}s)"
-                )
-            )
+            print((f"[{i+1}/{len(runs)}] {cfg} -> {out.get(metric, 'NA')} " f"({out.get('_elapsed_sec', '?')}s)"))
 
     # Rank
     def score_fn(o: Dict[str, Any]) -> float:
@@ -114,9 +173,7 @@ def main():
         header = ["rank", metric, "_elapsed_sec"] + fieldnames
         w.writerow(header)
         for rank, (cfg, out) in enumerate(sorted_rows, 1):
-            row = [rank, out.get(metric), out.get("_elapsed_sec")] + [
-                cfg.get(k) for k in fieldnames
-            ]
+            row = [rank, out.get(metric), out.get("_elapsed_sec")] + [cfg.get(k) for k in fieldnames]
             w.writerow(row)
 
     print(f"[ablate.py] Wrote {jsonl_path}")

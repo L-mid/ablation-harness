@@ -8,12 +8,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from ablation_harness.seed_utils import set_seed
+from ablation_harness.seed_utils import seed_everything, seed_worker
 
 try:
     import torchvision as tv
 except Exception:
     tv: Optional[ModuleType] = None
+
+"""
+Change the roots in datasets (not in repo).
+"""
 
 
 # -------------------------
@@ -60,9 +64,7 @@ def device():
 class MLP(nn.Module):
     def __init__(self, hidden=64, dropout=0.0):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(2, hidden), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden, 2)
-        )
+        self.net = nn.Sequential(nn.Linear(2, hidden), nn.ReLU(), nn.Dropout(dropout), nn.Linear(hidden, 2))
 
     def forward(self, x):
         return self.net(x)
@@ -112,13 +114,13 @@ def build_synthetic_moons(n=1024, seed=0) -> Tuple[TensorDataset, TensorDataset]
 def build_fakedata(size=2000, seed=0, subset=None):
     assert tv is not None, "torchvision not available for FakeData"
     g = torch.Generator().manual_seed(seed)
-    tfm = tv.transforms.Compose([tv.transforms.ToTensor()])  # "unbound error". despite assert.
+    tfm = tv.transforms.Compose([tv.transforms.ToTensor()])
     ds = tv.datasets.FakeData(
         size=size,
-        image_size=(3, 32, 32),  # genorator is not a fakedata param
+        image_size=(3, 32, 32),
         num_classes=10,
         transform=tfm,
-        generator=g,
+        generator=g,  # g might not be a fakedata param
     )
     if subset is not None and subset < len(ds):
         from torch.utils.data import Subset
@@ -179,13 +181,17 @@ def _evaluate(model, loader, crit, dev):
 
 
 def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
-    set_seed(cfg.seed)
+    cfg = cfg
+    seed_everything(cfg.seed)
     dev = device()
+
+    # seeding dataloader + workers:
+    g = seed_everything(1337)
 
     # --- Data ---
     if cfg.dataset == "moons":
         train_ds, val_ds = build_synthetic_moons(n=1024, seed=cfg.seed)
-        _, num_classes = (2,), 2  # noqa: F841
+        _, num_classes = (2,), 2
     elif cfg.dataset == "fakedata":
         train_ds, val_ds = build_fakedata(size=2000, seed=cfg.seed, subset=cfg.subset or 2000)
         _, num_classes = (3, 32, 32), 10
@@ -218,6 +224,8 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
         batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.num_workers,
+        generator=g,
+        worker_init_fn=seed_worker,
         pin_memory=cfg.pin_memory,
         collate_fn=_collate if cfg.dataset in {"mnist"} else None,
     )
@@ -225,6 +233,8 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
         val_ds,
         batch_size=256,
         shuffle=False,
+        generator=g,
+        worker_init_fn=seed_worker,
         num_workers=cfg.num_workers,
         pin_memory=cfg.pin_memory,
         collate_fn=_collate if cfg.dataset in {"mnist"} else None,
@@ -258,7 +268,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
 
 
 # ---------------------------
-# ablate.py entrypoint
+# ablate.py entrypoints
 # ---------------------------
 def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -267,3 +277,24 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     # Fill defualts via dataclass; allow unknown kets to override if present.
     cfg = TrainConfig(**{**TrainConfig().__dict__, **config_dict})
     return train_and_eval(cfg)
+
+
+# for dry-runs/preflights
+
+
+def preflight(cfg: dict) -> dict:
+    try:
+        # build model/dataset quickly, no downloads/writes
+        model = MLP()
+        model.eval()
+        x = torch.zeros(1, 2)
+        with torch.no_grad():
+            _ = model(x)
+            return {
+                "ok": True,
+                "params": sum(p.numel() for p in model.parameters()),
+                "input_shape": list(x.shape),
+                "artifacts": ["results.jsonl", "summary.csv", "ckpt.pt"],
+            }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
