@@ -49,7 +49,7 @@ def cartesian_grid(base: Dict[str, Any], grid: Dict[str, List[Any]]) -> List[Dic
     return runs
 
 
-def load_yaml(path: str) -> Dict[str, Any]:  # here
+def load_yaml(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 

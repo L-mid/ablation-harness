@@ -1,6 +1,4 @@
 
-# no idea how this goes into trainer.py. but it does
-
 base:
   model: "mlp"
   epochs: 4
