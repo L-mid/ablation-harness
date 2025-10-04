@@ -1,4 +1,5 @@
 import os
+import time
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple
@@ -36,6 +37,8 @@ class TrainConfig:
     subset: Optional[int] = None  # e.g., 1000
     num_workers: int = 0
     pin_memory: bool = False
+    out_dir: Optional[str] = None  # for checkpointing
+    run_id: Optional[str] = None
     _study: Optional[str] = None
     _variant: Optional[str] = None
 
@@ -69,23 +72,21 @@ class TinyCNN(nn.Module):
     def __init__(self, num_classes=10, dropout=0.0):
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
+            nn.Conv2d(3, 16, 3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(32, 32, 3, padding=1),
+            nn.Conv2d(16, 16, 3, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2),
             nn.Dropout2d(dropout),
-            nn.Conv2d(32, 64, 3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(64, 64, 3, padding=1),
+            nn.Conv2d(16, 32, 3, padding=1),
             nn.ReLU(),
             nn.AdaptiveAvgPool2d(1),
         )
-        self.classifier = nn.Linear(64, num_classes)
+        self.classifier = nn.Linear(32, num_classes)
 
     def forward(self, x):
-        x = self.features(x)  # [B, 64, 1, 1]
-        x = x.view(x.size(0), -1)  # [B, 64]
+        x = self.features(x)  # [B, 32, 1, 1]
+        x = x.view(x.size(0), -1)  # [B, 32]
         return self.classifier(x)
 
 
@@ -174,7 +175,15 @@ def _evaluate(model, loader, crit, dev):
         }
 
 
-def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
+def _make_run_dir(cfg: TrainConfig) -> Tuple[str, str]:
+    base = cfg.out_dir or "runs"
+    rid = cfg.run_id or f"{cfg.model}={cfg.dataset}-s{cfg.seed}-{int(time.time())}"
+    run_dir = os.path.join(base, rid)
+    os.makedirs(run_dir, exist_ok=True)
+    return rid, run_dir
+
+
+def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
     cfg = cfg
     global_seed = cfg.seed
 
@@ -186,8 +195,6 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
     g = make_generator(process_seed)
 
     dev = device()
-
-    # seeding dataloader + workers:
 
     # --- Data ---
     if cfg.dataset == "moons":
@@ -245,6 +252,8 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
     crit = nn.CrossEntropyLoss()
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
 
+    rid, run_dir = _make_run_dir(cfg)
+    ckpt_path = os.path.join(run_dir, "ckpt.pt")
     best_val = -1.0
     last_val = {}
     for _ in range(cfg.epochs):
@@ -257,7 +266,17 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
             loss.backward()
             opt.step()
         last_val = _evaluate(model, val_loader, crit, dev)
-        best_val = max(best_val, last_val["acc"])
+
+        if last_val["acc"] >= best_val:
+            best_val = last_val["acc"]  # small ckpt skel, saves only model
+            torch.save(
+                {
+                    "model_state": model.state_dict(),
+                    "cfg": cfg.__dict__,
+                    "val": last_val,
+                },
+                ckpt_path,
+            )
 
     return {
         "seed": cfg.seed,
@@ -266,6 +285,9 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:
         "params": int(sum(p.numel() for p in model.parameters())),
         "dataset": cfg.dataset,
         "model_used": model.__class__.__name__,
+        "run_id": rid,
+        "run_dir": run_dir,
+        "ckpt": ckpt_path,
     }
 
 
@@ -276,7 +298,7 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Entry used by ablate.py -- keep this signature stable.
     """
-    # Fill defualts via dataclass; allow unknown keys to override if present.
+    # Fill defualts via dataclass. Does not allow unknown keys.
     cfg = TrainConfig(**{**TrainConfig().__dict__, **config_dict})
     return train_and_eval(cfg)
 
