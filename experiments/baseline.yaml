@@ -6,15 +6,15 @@ goal: "max"
 
 # Default recipe for this study (maps 1:1 to TrainConfig fields)
 baseline:
-  model: "mlp"
-  epochs: 4
-  batch_size: 64
-  dataset: "moons"
+  model: "tinycnn"
+  epochs: 1
+  batch_size: 256
+  dataset: "cifar10"
   hidden: 64
-  dropout: 0.0
+  dropout: 0.7
   lr: 0.001
   wd: 0.0
-  subset: null            # full data, unless a variant overrides it
+  subset: 200            # full data, unless a variant overrides it
   num_workers: 0
   pin_memory: false
 

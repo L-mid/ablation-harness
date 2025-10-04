@@ -19,9 +19,13 @@ python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs
 Teir 2 (tiny real)
 python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
+Teir 3 (baseline.yaml study)
+python -m ablation_harness.ablate --config experiments/baseline.yaml --out_dir runs/baseline
+
+
 pytest -q
 
-python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # should make no dirs. works with toy_moons, no seeding
+python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # make no dirs. works with toy_moons, no seeding
 
 
 for installation: pip install -e ".[dev,torch-cpu]"
@@ -54,6 +58,92 @@ def load_yaml(path: str) -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def deep_merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(a)
+    for k, v in b.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge
+        else:
+            out[k] = v
+    return out
+
+
+_warned_legacy_keys = False
+
+
+def translate_legacy_keys(d: Dict[str, Any]) -> Dict[str, Any]:
+    """Map legacy study keys onto TrainConfig names without breaking sweeps."""
+    global _warned_legacy_keys
+    out = dict(d)
+    if "n_samples" in out and "subset" not in out:
+        out["subset"] = out.pop("n_samples")
+        if not _warned_legacy_keys:
+            eprint("[ablate.py: WARN] Translated legacy key 'n_samples' -> 'subset' in StudySpec overrides")
+            _warned_legacy_keys = True
+    return out
+
+
+def resolve_sweep_spec(spec: Dict[str, Any], cli_seed: int | None) -> List[Dict[str, Any]]:
+    base = spec.get("base", {}) or {}
+    grid = dict(spec.get("grid", {}) or {})
+    # CLI seed overrides any seed in grid or base
+    if cli_seed is not None:
+        base["seed"] = cli_seed
+        grid.pop("seed", None)
+        seeds = [cli_seed]
+    else:
+        seeds = grid.pop("seed", None)
+        if seeds is None:
+            seeds = [base.get("seed", 0)]
+    # Build combos for non-seed params
+    keys = list(grid.keys())
+    vals = [grid[k] for k in keys]
+    combos = [dict(zip(keys, combo)) for combo in (itertools.product(*vals) if keys else [()])]
+    runs: List[Dict[str, Any]] = []
+    for combo in combos:
+        for s in seeds:
+            cfg = dict(base)
+            cfg.update(combo)
+            cfg["seed"] = s
+            runs.append(cfg)
+    return runs
+
+
+def resolve_study_spec(spec: Dict[str, Any], cli_seed: int | None) -> List[Dict[str, Any]]:
+    base = translate_legacy_keys(spec.get("baseline", {}) or {})
+    seeds = spec.get("seeds", [base.get("seed", 0)])
+    if cli_seed is not None:
+        seeds = [cli_seed]
+        base["seed"] = cli_seed
+    variants = spec.get("variants", [])
+    study_name = spec.get("study_name") or spec.get("name") or "study"
+    runs: List[Dict[str, Any]] = []
+    if not variants:
+        # If no variants, treat baseline itself as one variant
+        variants = [{"name": "baseline", "overrides": {}}]
+    for v in variants:
+        vname = v.get("name", "variant")
+        overrides = translate_legacy_keys(v.get("overrides", {}) or {})
+        cfg0 = deep_merge(base, overrides)
+        for s in seeds:
+            cfg = dict(cfg0)
+            cfg["seed"] = s
+            # Attach study metadata (trainer can ignore unknown keys)
+            cfg["_study"] = study_name
+            cfg["_variant"] = vname
+            runs.append(cfg)
+    return runs
+
+
+def detect_schema(spec: Dict[str, Any]) -> str:
+    if "base" in spec or "grid" in spec:
+        return "sweep"
+    schema = str(spec.get("schema", ""))
+    if schema.startswith("study/") or "baseline" in spec or "variants" in spec:
+        return "study"
+    return "unknown"
+
+
 def eprint(*a, **k):
     print(*a, **k, file=sys.stderr)
 
@@ -61,27 +151,46 @@ def eprint(*a, **k):
 def main():  # noqa: C901
 
     p = argparse.ArgumentParser()
-    p.add_argument("--config", required=True, help="YAML with base/grid/metric/goal")
+    p.add_argument("--config", required=True, help="YAML with either base/grid or a study spec")
     p.add_argument("--trainer", default="ablation_harness.trainer", help="Module with run(config_dict)->dict")
     p.add_argument("--dry-run", action="store_true", help="Plan and validate only; no writes/training")
     p.add_argument("--out_dir", default="runs/ablation", help="Output directory")
-    p.add_argument("--seed", type=int, default=None, help="Override seed for a single run")
+    p.add_argument("--seed", type=int, default=None, help="Override seed expansion (disables grid/study seed sweeps)")
     args = p.parse_args()
     spec = load_yaml(args.config)
 
-    base = spec.get("base", {})
-    grid = spec.get("grid", {})
+    schema = detect_schema(spec)
+    # metric/goal can live in either spec type
     metric = spec.get("metric", "val/acc")
     goal = spec.get("goal", "max")  # "max" or "min"
 
     if args.seed is not None:
         eprint("seed(s):", args.seed)
-        spec["base"]["seed"] = args.seed
-        # If user asked for a single seed, don't also sweep seeds from YAML:
-        if "grid" in spec and "seed" in spec["grid"]:
-            del spec["grid"]["seed"]
 
-    runs = cartesian_grid(base, grid) if grid else [base]
+        has_base = isinstance(spec.get("base"), dict)
+        has_grid = isinstance(spec.get("grid"), dict)
+        has_baseline = isinstance(spec.get("baseline"), dict)
+        looks_like_study = spec.get("schema") == schema.startswith("study/") or has_baseline or "variants" in spec or "seeds" in spec
+
+        if has_base:
+            spec["base"]["seed"] = args.seed
+        if has_grid:
+            spec["grid"].pop("seed", None)
+
+        if looks_like_study:
+            spec["baseline"]["seed"] = args.seed
+            spec["seeds"] = args.seed
+
+    if schema == "sweep":
+        runs = resolve_sweep_spec(spec, args.seed)
+    elif schema == "study":
+        runs = resolve_study_spec(spec, args.seed)
+    elif args.dry_run:
+        grid = spec.get("grid", {})
+        base = spec.get("base", {})
+        runs = cartesian_grid(spec, grid) if grid else [base]
+    else:
+        raise SystemExit("Config must be a SweepSpec (base+grid) or StudySpec (schema: study/v1)")
 
     eprint(f"[ablate.py] {len(runs)} runs")
 
