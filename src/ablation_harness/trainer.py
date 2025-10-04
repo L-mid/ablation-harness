@@ -36,6 +36,8 @@ class TrainConfig:
     subset: Optional[int] = None  # e.g., 1000
     num_workers: int = 0
     pin_memory: bool = False
+    _study: Optional[str] = None
+    _variant: Optional[str] = None
 
 
 # --------------------------

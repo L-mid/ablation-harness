@@ -1,6 +1,33 @@
+schema: study/v1
+study_name: "moons-baseline"
+metric: "val/acc"
+goal: "max"
+
+
+# Default recipe for this study (maps 1:1 to TrainConfig fields)
+baseline:
+  model: "tinycnn"
+  epochs: 1
+  batch_size: 256
+  dataset: "cifar10"
+  hidden: 64
+  dropout: 0.7
+  lr: 0.001
+  wd: 0.0
+  subset: 200            # full data, unless a variant overrides it
+  num_workers: 0
+  pin_memory: false
+
+
+# Repeat each variant across these seeds (unless CLI --seed overrides)
 seeds: [0, 1, 2, 3]
-experiments:
-  - name: baseline
-    n_samples: 1000
-  - name: bigger
-    n_samples: 3000
+
+
+# A small, curated set of baseline variants
+variants:
+  - name: "baseline_1k"
+    overrides:
+      subset: 1000        # ← use TrainConfig field names
+  - name: "baseline_3k"
+    overrides:
+      subset: 3000
