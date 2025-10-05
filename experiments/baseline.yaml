@@ -17,6 +17,12 @@ baseline:
   subset: 200            # full data, unless a variant overrides it
   num_workers: 0
   pin_memory: false
+    # Special: invokes spectral.py SDV, track each layer's top singular values
+  spectral_diag:
+    enabled: true
+    every_n_epochs: 1
+    topk: 5
+    # save_dir: runs/spectral   # optional; defaults to the run_dir
 
 
 # Repeat each variant across these seeds (unless CLI --seed overrides)
