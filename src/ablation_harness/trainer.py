@@ -1,6 +1,7 @@
+import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple
 
@@ -9,6 +10,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
+from ablation_harness.spectral import collect_spectral_stats
 
 try:
     import torchvision as tv
@@ -23,6 +25,16 @@ Change the roots in datasets (not in repo).
 # -------------------------
 # Config
 # -------------------------
+
+
+@dataclass
+class SpectralDiagCfg:
+    enabled: bool = False
+    every_n_epochs: int = 1
+    topk: int = 5
+    save_dir: Optional[str] = None  # if None, use run_dir
+
+
 @dataclass
 class TrainConfig:
     model: str = "mlp"  # "mlp" | "tinycnn"
@@ -37,10 +49,11 @@ class TrainConfig:
     subset: Optional[int] = None  # e.g., 1000
     num_workers: int = 0
     pin_memory: bool = False
-    out_dir: Optional[str] = None  # for checkpointing
+    out_dir: Optional[str] = None  # for checkpointing + (make run dir)
     run_id: Optional[str] = None
     _study: Optional[str] = None
     _variant: Optional[str] = None
+    spectral_diag: Optional[SpectralDiagCfg] = None
 
 
 # --------------------------
@@ -176,7 +189,22 @@ def _evaluate(model, loader, crit, dev):
 
 
 def _make_run_dir(cfg: TrainConfig) -> Tuple[str, str]:
-    base = cfg.out_dir or "runs"
+    """
+    right now, dirs are solely handled by ablate.py:
+    using the --out_dir CI command. --out_dir OUT
+
+    which is parsed to:
+
+    os.makedirs(args.out_dir, exist_ok=True)
+    jsonl_path = os.path.join(args.out_dir, "results.jsonl")
+    csv_path = os.path.join(args.out_dir, "summary.csv")
+
+
+    Basically, this _make_run_dir is not hooked up and goes to runs/ckpts (or outdir).
+    Outputs from this file should be logged in future, not saved to disk (ckpts idk).
+    """
+
+    base = cfg.out_dir or "runs/ckpts"
     rid = cfg.run_id or f"{cfg.model}={cfg.dataset}-s{cfg.seed}-{int(time.time())}"
     run_dir = os.path.join(base, rid)
     os.makedirs(run_dir, exist_ok=True)
@@ -253,10 +281,12 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
 
     rid, run_dir = _make_run_dir(cfg)
-    ckpt_path = os.path.join(run_dir, "ckpt.pt")
+    ckpt_path = os.path.join(run_dir, "ckpts.pt")
+
     best_val = -1.0
     last_val = {}
-    for _ in range(cfg.epochs):
+    spect_stats = None
+    for epoch in range(cfg.epochs):
         model.train()
         for xb, yb in train_loader:
             xb, yb = xb.to(dev), yb.to(dev)
@@ -266,6 +296,18 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
             loss.backward()
             opt.step()
         last_val = _evaluate(model, val_loader, crit, dev)
+
+        # spectral:
+        if cfg.spectral_diag and cfg.spectral_diag.enabled:
+            if epoch % cfg.spectral_diag.every_n_epochs == 0:
+                spect_stats = collect_spectral_stats(model, topk=cfg.spectral_diag.topk)
+
+                # dump to disk for now since no logger yet OR skip.
+                save_dir = cfg.spectral_diag.save_dir or run_dir
+                os.makedirs(save_dir, exist_ok=True)
+                out_path = os.path.join(save_dir, f"spectral_epoch{epoch:03d}.json")
+                with open(out_path, "w", encoding="utf-8") as f:
+                    json.dump({"epoch": epoch, "stats": spect_stats}, f, ensure_ascii=False, indent=2)
 
         if last_val["acc"] >= best_val:
             best_val = last_val["acc"]  # small ckpt skel, saves only model
@@ -278,6 +320,14 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                 ckpt_path,
             )
 
+    # spectral:
+    if cfg.spectral_diag and cfg.spectral_diag.enabled:
+        final_stats = collect_spectral_stats(model, topk=9999)  # big number == "as many as exist"
+        # another todo logger hook:
+        save_dir = cfg.spectral_diag.save_dir or run_dir
+        with open(os.path.join(save_dir, "spectral_final.json"), "w", encoding="utf-8") as f:
+            json.dump({"epoch": "final", "stats": final_stats}, f, ensure_ascii=False, indent=2)
+
     return {
         "seed": cfg.seed,
         "val/acc": float(best_val),
@@ -288,6 +338,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
         "run_id": rid,
         "run_dir": run_dir,
         "ckpt": ckpt_path,
+        "spect_stats": spect_stats,
     }
 
 
@@ -299,7 +350,11 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     Entry used by ablate.py -- keep this signature stable.
     """
     # Fill defualts via dataclass. Does not allow unknown keys.
-    cfg = TrainConfig(**{**TrainConfig().__dict__, **config_dict})
+    defaults = TrainConfig()
+    sd = config_dict.get("spectral_diag")
+    if isinstance(sd, dict):
+        config_dict = {**config_dict, "spectral_diag": SpectralDiagCfg(**sd)}
+    cfg = replace(defaults, **config_dict)
     return train_and_eval(cfg)
 
 

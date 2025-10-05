@@ -1,6 +1,6 @@
 [project]
 name = "ablation-harness"
-version = "0.1.0"
+version = "0.1.0a0"
 description = "Ablation harness + reproducibility template"
 readme = "README.md"
 requires-python = ">=3.10"
