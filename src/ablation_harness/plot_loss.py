@@ -103,7 +103,7 @@ def collect_series_from_jsonl(rows: List[Dict], xkey: str, metrics=None) -> Tupl
 
     if metrics is None:
         # Auto-pick anything ending with "/loss" or named "loss"
-        metrics = sorted([k for k in available if k.endswith("/loss") or k == "loss"])
+        metrics = sorted([k for k in available if k.endswith("/loss") or k == "loss"])  # specify this?
         if not metrics:
             print(
                 "[plot_loss.py: WARN] No loss-like metrics found; specify --metrics.",

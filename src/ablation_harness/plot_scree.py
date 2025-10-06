@@ -1,6 +1,6 @@
 """
 Useage:
-    python -m ablation_harness.plot_scree runs/ckpts/<filenamewithrunid>/spectral_final.json --layer classifier --out runs/scree_classifier --logy
+    python -m ablation_harness.plot_scree runs/ckpts/<filenamewithrunid>/spectral_final.json --layer classifier --out runs/figs/scree_classifier --logy
 
     --layer name like classifier, features.0, etc.
     --out is a path prefix; it writes <out>.png.
@@ -10,7 +10,7 @@ Useage:
 This plotter only accepts json/dict input.
 
 current command:
-    python -m ablation_harness.plot_scree runs/ckpts/tinycnn=cifar10-s101-1759653433/spectral_final.json --layer classifier --out runs/scree_classifier --logy
+    python -m ablation_harness.plot_scree runs/ckpts/tinycnn=cifar10-s101-1759653433/spectral_final.json --layer classifier --out runs/figs/scree_classifier --logy --normalize
 
 
 No pytests for it.
