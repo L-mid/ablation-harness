@@ -9,3 +9,6 @@ Quickstart:
     python -m ablation_harness.ablate -c experiments/baseline.yaml
 
 ![CI](https://github.com/l-mid/ablation-harness/actions/workflows/ci.yml/badge.svg?branch=main)
+
+### Wkly Reports (for 4 wks):
+- [Week 1 Baseline — TinyCNN on CIFAR-10](docs/reports/wk1_baseline.md)
