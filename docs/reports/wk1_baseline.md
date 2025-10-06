@@ -6,7 +6,6 @@
 
 ## Setup
 
-data slice: CIFAR10
 - Data: CIFAR-10 (subset=256), batch_size=128, ToTensor only.
 - Model: TinyCNN (params=7,738), dropout=0, lr=1e-3, wd=0, epochs=25.
 - Seed: 11; Device: CPU.
