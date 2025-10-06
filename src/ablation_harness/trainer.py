@@ -57,7 +57,7 @@ class TrainConfig:
     num_workers: int = 0
     pin_memory: bool = False
     out_dir: Optional[str] = "runs/logs"  # for checkpointing + (make run dir in gernal)
-    run_id: Optional[str] = None
+    run_id: Optional[str] = "generic_any_id"
     _study: Optional[str] = None
     _variant: Optional[str] = None
     log_every: int = 1
