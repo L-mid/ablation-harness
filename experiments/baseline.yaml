@@ -1,23 +1,24 @@
 schema: study/v1
-study_name: "moons-baseline"
+study_name: "test_plots_cifar"
 metric: "val/acc"
 goal: "max"
 
 
-# Default recipe for this study (maps 1:1 to TrainConfig fields)
+# Default recipe for this study (ideally maps 1:1 to TrainConfig fields)
 baseline:
   model: "tinycnn"
-  epochs: 1
-  batch_size: 256
+  epochs: 25
+  batch_size: 128
   dataset: "cifar10"
-  hidden: 64
-  dropout: 0.7
+  dropout: 0
   lr: 0.001
   wd: 0.0
-  subset: 200            # full data, unless a variant overrides it
+  subset: 256            # full data, unless a variant overrides it
   num_workers: 0
   pin_memory: false
-    # Special: invokes spectral.py SDV, track each layer's top singular values
+  run_id: id_writeup_baseline_1
+
+  # Special: invokes spectral.py SDV, track each layer's top singular values
   spectral_diag:
     enabled: true
     every_n_epochs: 1
@@ -30,10 +31,8 @@ seeds: [0, 1, 2, 3]
 
 
 # A small, curated set of baseline variants
-variants:
-  - name: "baseline_1k"
-    overrides:
-      subset: 1000        # ← use TrainConfig field names
-  - name: "baseline_3k"
-    overrides:
-      subset: 3000
+variants: null
+
+#   - name: "baseline_3k"
+#    overrides:
+#      subset: 3000         ← use TrainConfig field names, override

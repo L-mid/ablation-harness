@@ -1,6 +1,16 @@
+"""
+TODO:
+    Change the roots in datasets (out of repo).
+    _make_run_dir: goes to arbirary place. Get a logger working.
+    Got big and complicated fast: break out pieces.
+    Not all datasets are tested to be working: remove or test.
+    batch spectrals
+
+
+"""
+
 import json
 import os
-import time
 from dataclasses import dataclass, replace
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple
@@ -9,6 +19,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from ablation_harness.jsonl_metric_logger import MetricLogger
 from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
 from ablation_harness.spectral import collect_spectral_stats
 
@@ -16,10 +27,6 @@ try:
     import torchvision as tv
 except Exception:
     tv: Optional[ModuleType] = None
-
-"""
-Change the roots in datasets (not in repo).
-"""
 
 
 # -------------------------
@@ -49,10 +56,11 @@ class TrainConfig:
     subset: Optional[int] = None  # e.g., 1000
     num_workers: int = 0
     pin_memory: bool = False
-    out_dir: Optional[str] = None  # for checkpointing + (make run dir)
-    run_id: Optional[str] = None
+    out_dir: Optional[str] = "runs/logs"  # for checkpointing + (make run dir in gernal)
+    run_id: Optional[str] = "generic_any_id"
     _study: Optional[str] = None
     _variant: Optional[str] = None
+    log_every: int = 1
     spectral_diag: Optional[SpectralDiagCfg] = None
 
 
@@ -167,8 +175,6 @@ def build_cifar10(subset=None):
 # -----------------------
 # Train/Eval
 # -----------------------
-def _accuracy(logits, y):
-    return (logits.argmax(1) == y).float().mean().item()
 
 
 def _evaluate(model, loader, crit, dev):
@@ -204,8 +210,8 @@ def _make_run_dir(cfg: TrainConfig) -> Tuple[str, str]:
     Outputs from this file should be logged in future, not saved to disk (ckpts idk).
     """
 
-    base = cfg.out_dir or "runs/ckpts"
-    rid = cfg.run_id or f"{cfg.model}={cfg.dataset}-s{cfg.seed}-{int(time.time())}"
+    base = cfg.out_dir
+    rid = cfg.run_id
     run_dir = os.path.join(base, rid)
     os.makedirs(run_dir, exist_ok=True)
     return rid, run_dir
@@ -276,70 +282,81 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
         collate_fn=_collate if cfg.dataset in {"mnist"} else None,
     )
 
+    # should be a train_loop.py?
+
     model.to(dev)
     crit = nn.CrossEntropyLoss()
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+    global_step = 0
 
     rid, run_dir = _make_run_dir(cfg)
     ckpt_path = os.path.join(run_dir, "ckpts.pt")
 
-    best_val = -1.0
+    log_every = getattr(cfg, "log_every", 1)
+    loss_log_path = os.path.join(run_dir, "loss.jsonl")
+    best_val = float("-inf")
     last_val = {}
     spect_stats = None
-    for epoch in range(cfg.epochs):
-        model.train()
-        for xb, yb in train_loader:
-            xb, yb = xb.to(dev), yb.to(dev)
-            logits = model(xb)
-            loss = crit(logits, yb)
-            opt.zero_grad(set_to_none=True)
-            loss.backward()
-            opt.step()
-        last_val = _evaluate(model, val_loader, crit, dev)
+
+    with MetricLogger(loss_log_path, fmt="jsonl") as mlog:
+        for epoch in range(cfg.epochs):
+            print(f"[trainer.py:] current epoch: {epoch}")
+            model.train()
+            for xb, yb in train_loader:
+                xb, yb = xb.to(dev), yb.to(dev)
+                logits = model(xb)
+                loss = crit(logits, yb)
+                opt.zero_grad(set_to_none=True)
+                loss.backward()
+                opt.step()
+
+                global_step += 1
+
+                if global_step % log_every == 0:
+                    mlog.log(global_step, **{"train/loss": float(loss.item())})
+
+            last_val = _evaluate(model, val_loader, crit, dev)
+
+            # spectral:
+            if cfg.spectral_diag and cfg.spectral_diag.enabled:
+                if epoch % cfg.spectral_diag.every_n_epochs == 0:
+                    spect_stats = collect_spectral_stats(model, topk=cfg.spectral_diag.topk)
+
+                    # dump to disk for now since no logger yet OR skip.
+                    save_dir = cfg.spectral_diag.save_dir or run_dir
+                    os.makedirs(save_dir, exist_ok=True)
+                    out_path = os.path.join(save_dir, f"epoch_spectrals/spectral_epoch{epoch:03d}.json")
+                    with open(out_path, "w", encoding="utf-8") as f:
+                        json.dump({"epoch": epoch, "stats": spect_stats}, f, ensure_ascii=False, indent=2)
+
+            if last_val["acc"] >= best_val:
+                best_val = last_val["acc"]  # small ckpt skel, saves only model
+                torch.save(
+                    {"model_state": model.state_dict(), "cfg": cfg.__dict__, "val": last_val},
+                    ckpt_path,
+                )
 
         # spectral:
         if cfg.spectral_diag and cfg.spectral_diag.enabled:
-            if epoch % cfg.spectral_diag.every_n_epochs == 0:
-                spect_stats = collect_spectral_stats(model, topk=cfg.spectral_diag.topk)
+            final_stats = collect_spectral_stats(model, topk=9999)  # big number == "as many as exist"
+            # another todo logger hook:
+            save_dir = cfg.spectral_diag.save_dir or run_dir
+            with open(os.path.join(save_dir, "spectral_final.json"), "w", encoding="utf-8") as f:
+                json.dump({"epoch": "final", "stats": final_stats}, f, ensure_ascii=False, indent=2)
 
-                # dump to disk for now since no logger yet OR skip.
-                save_dir = cfg.spectral_diag.save_dir or run_dir
-                os.makedirs(save_dir, exist_ok=True)
-                out_path = os.path.join(save_dir, f"spectral_epoch{epoch:03d}.json")
-                with open(out_path, "w", encoding="utf-8") as f:
-                    json.dump({"epoch": epoch, "stats": spect_stats}, f, ensure_ascii=False, indent=2)
-
-        if last_val["acc"] >= best_val:
-            best_val = last_val["acc"]  # small ckpt skel, saves only model
-            torch.save(
-                {
-                    "model_state": model.state_dict(),
-                    "cfg": cfg.__dict__,
-                    "val": last_val,
-                },
-                ckpt_path,
-            )
-
-    # spectral:
-    if cfg.spectral_diag and cfg.spectral_diag.enabled:
-        final_stats = collect_spectral_stats(model, topk=9999)  # big number == "as many as exist"
-        # another todo logger hook:
-        save_dir = cfg.spectral_diag.save_dir or run_dir
-        with open(os.path.join(save_dir, "spectral_final.json"), "w", encoding="utf-8") as f:
-            json.dump({"epoch": "final", "stats": final_stats}, f, ensure_ascii=False, indent=2)
-
-    return {
-        "seed": cfg.seed,
-        "val/acc": float(best_val),
-        "val/loss": float(last_val.get("loss", 0.0)),
-        "params": int(sum(p.numel() for p in model.parameters())),
-        "dataset": cfg.dataset,
-        "model_used": model.__class__.__name__,
-        "run_id": rid,
-        "run_dir": run_dir,
-        "ckpt": ckpt_path,
-        "spect_stats": spect_stats,
-    }
+        return {
+            "seed": cfg.seed,
+            "val/acc": float(best_val),
+            "val/loss": float(last_val.get("loss", 0.0)),
+            "params": int(sum(p.numel() for p in model.parameters())),
+            "dataset": cfg.dataset,
+            "model_used": model.__class__.__name__,
+            "run_id": rid,
+            "run_dir": run_dir,
+            "ckpt": ckpt_path,
+            "spect_stats": spect_stats,
+            "loss_log": loss_log_path,
+        }
 
 
 # ---------------------------
@@ -359,8 +376,6 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # for dry-runs/preflights
-
-
 def preflight(cfg: dict) -> dict:
     try:
         # build model/dataset quickly, no downloads/writes
@@ -376,4 +391,5 @@ def preflight(cfg: dict) -> dict:
                 "artifacts": ["results.jsonl", "summary.csv", "ckpt.pt"],
             }
     except Exception as e:
+        print("[trainer.py: WARN: error this run]")
         return {"ok": False, "error": str(e)}

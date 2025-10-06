@@ -11,32 +11,37 @@ from typing import Any, Callable, Dict, List, Tuple
 import yaml
 
 """
-running calls:
+Example Usage:
 
-Teir 1 (synthetic)
-python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs/moons
+(baseline.yaml: study/example set):
+    python -m ablation_harness.ablate --config experiments/baseline.yaml --out_dir runs/writeup_baseline --seed 11
 
-Teir 2 (tiny real)
-python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
+(synthetic):
+    python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs/moons
 
-Teir 3 (baseline.yaml study)
-python -m ablation_harness.ablate --config experiments/baseline.yaml --out_dir runs/baseline
-
-
-pytest -q
-
-python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run   # make no dirs. works with toy_moons, no seeding
+(tiny real):
+    python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
 
-for installation: pip install -e ".[dev,torch-cpu]"
+
+--dry-run param (explicit command):
+    python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run
+    # makes no dirs. works with toy_moons only. no seeding
 
 
-seed precedence rule:
+--seed precedence rule:
     If --seed is provided → use that seed only (remove grid.seed).
     Else if grid.seed exists → sweep those seeds.
     Else use base.seed (default).
 
-    python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny --seed 799
+    usage:
+        python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny --seed 799
+
+"""
+
+"""
+TODO:
+    Needs a better error message when runs fail.
 
 """
 
