@@ -56,11 +56,13 @@ class TrainConfig:
     subset: Optional[int] = None  # e.g., 1000
     num_workers: int = 0
     pin_memory: bool = False
-    out_dir: Optional[str] = "runs/logs"  # for checkpointing + (make run dir in gernal)
-    run_id: Optional[str] = "generic_any_id"
+    out_dir: str = "runs/any_logs"  # for checkpointing + (make run dir in gernal)
+    run_id: str = "generic_any_id"
     _study: Optional[str] = None
     _variant: Optional[str] = None
     log_every: int = 1
+    optimizer: Any = None
+    ema: Any = None
     spectral_diag: Optional[SpectralDiagCfg] = None
 
 
@@ -282,15 +284,30 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
         collate_fn=_collate if cfg.dataset in {"mnist"} else None,
     )
 
+    def _choose_optimizer(cfg):
+        if cfg.optimizer == "adam":
+            optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+        elif cfg.optimizer == "sgd":
+            optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+        else:
+            # AdamW as default Optim
+            optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+
+        return optimizer
+
     # should be a train_loop.py?
 
     model.to(dev)
     crit = nn.CrossEntropyLoss()
-    opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+    opt = _choose_optimizer(cfg)
     global_step = 0
 
     rid, run_dir = _make_run_dir(cfg)
-    ckpt_path = os.path.join(run_dir, "ckpts.pt")
+
+    # ckpts
+    ckpt_dir = os.path.join(run_dir, "ckpts")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    ckpt_path = os.path.join(ckpt_dir, "ckpts.pt")
 
     log_every = getattr(cfg, "log_every", 1)
     loss_log_path = os.path.join(run_dir, "loss.jsonl")
@@ -313,7 +330,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                 global_step += 1
 
                 if global_step % log_every == 0:
-                    mlog.log(global_step, **{"train/loss": float(loss.item())})
+                    mlog.log(global_step, **{"train/loss": float(loss.item()), "epoch": epoch})
 
             last_val = _evaluate(model, val_loader, crit, dev)
 
@@ -335,6 +352,9 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                     {"model_state": model.state_dict(), "cfg": cfg.__dict__, "val": last_val},
                     ckpt_path,
                 )
+
+            # saving loss to the loss.jsonl explicitly:
+            mlog.log(global_step, **{"val/loss": float(last_val["loss"]), "val/acc": float(last_val["acc"]), "epoch": epoch})
 
         # spectral:
         if cfg.spectral_diag and cfg.spectral_diag.enabled:

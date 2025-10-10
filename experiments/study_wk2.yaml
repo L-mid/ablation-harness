@@ -1,0 +1,28 @@
+schema: study/v1
+study_name: tinycnn_cifar10_wk2
+metric: val/acc
+goal: max
+
+baseline:
+  dataset: cifar10
+  subset: 256
+  epochs: 1
+  batch_size: 128
+  seed: 0
+  model: tinycnn
+  optimizer: adam
+  lr: 0.001
+  wd: 0.0
+  ema: false
+
+variants:
+  - name: "varient_1"
+    overrides: {optimizer: adam, lr: 0.0003, wd: 0.0, ema: false}
+  - name: "varient_2"
+    overrides: {optimizer: adam, lr: 0.001,  wd: 0.0, ema: true}
+  - name: "varient_3"
+    overrides: {optimizer: sgd,  lr: 0.01,   wd: 0.0005, ema: false, momentum: 0.9}  # momentum is novel cfg
+  - name: "varient_4"
+    overrides: {optimizer: sgd,  lr: 0.003,  wd: 0.0005, ema: false, momentum: 0.9}
+  - name: "varient_5"
+    overrides: {optimizer: sgd,  lr: 0.003,  wd: 0.0005, ema: true,  momentum: 0.9}

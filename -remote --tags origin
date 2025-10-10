@@ -1,0 +1,24 @@
+[33mtag v0.1.0b[m
+Tagger: L <midjourney4321@gmail.com>
+Date:   Mon Oct 6 16:03:41 2025 +0100
+
+v0.1.0b: correct name
+
+[33mcommit 6a6a08e95a0ebdf6ba1187725f9902475c246bff[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;33mtag: [m[1;33mv0.1.0b[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: L-mid <midjourney4321@gmail.com>
+Date:   Mon Oct 6 15:29:12 2025 +0100
+
+    Update wk1_baseline.md
+
+[1mdiff --git a/docs/reports/wk1_baseline.md b/docs/reports/wk1_baseline.md[m
+[1mindex ae988cd..6917b0a 100644[m
+[1m--- a/docs/reports/wk1_baseline.md[m
+[1m+++ b/docs/reports/wk1_baseline.md[m
+[36m@@ -6,7 +6,6 @@[m
+ [m
+ ## Setup[m
+ [m
+[31m-data slice: CIFAR10[m
+ - Data: CIFAR-10 (subset=256), batch_size=128, ToTensor only.[m
+ - Model: TinyCNN (params=7,738), dropout=0, lr=1e-3, wd=0, epochs=25.[m
+ - Seed: 11; Device: CPU.[m
