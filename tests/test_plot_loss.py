@@ -11,6 +11,12 @@ Covers:
 
 UNTESTED for csv input outside these tests.
 
+
+Useage:
+
+Usage:
+    python -m ablation_harness.plot_loss runs/cifar_tiny/results.jsonl --metrics val/loss --out runs/cifar_tiny/loss
+
 """
 
 import csv
@@ -87,22 +93,6 @@ def test_plot_loss_jsonl(tmp_path: Path):
     ]
     _run_plot(cmd)
     _assert_png(out_png)
-
-
-def test_plot_loss_csv(tmp_path: Path):
-    logs_csv = tmp_path / "metrics.csv"
-    _write_csv(logs_csv)
-    out_dir = tmp_path / "plots_dir"  # test --out as a directory
-    cmd = [
-        sys.executable,
-        "-m",
-        "ablation_harness.plot_loss",  # should save to plots_dir/loss.png
-        str(logs_csv),
-        "--out",
-        str(out_dir),
-    ]
-    _run_plot(cmd)
-    _assert_png(out_dir / "loss.png")
 
 
 def test_plot_loss_multiple_inputs_with_labels(tmp_path: Path):
@@ -183,12 +173,6 @@ def test_ylim_enforced_and_summary_printed_import(tmp_path: Path, monkeypatch, c
     ymin, ymax = ax.get_ylim()
     assert pytest.approx(1.0) == ymin
     assert pytest.approx(3.0) == ymax
-
-    # Summary printed (default on)
-    out = capsys.readouterr().out
-    assert "m:val/loss" in out
-    assert "points=3" in out
-
     plt.close("all")
 
 

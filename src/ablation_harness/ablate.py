@@ -23,6 +23,13 @@ Example Usage:
     python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
 
+Make sure to delete previous runs before starting in same dir for intended behavoiur
+
+Current user:
+    python -m ablation_harness.ablate --config experiments/study_test.yaml --out_dir runs/tinycnn_tester
+
+
+
 
 --dry-run param (explicit command):
     python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run
@@ -268,6 +275,7 @@ def main():  # noqa: C901
     os.makedirs(args.out_dir, exist_ok=True)
     jsonl_path = os.path.join(args.out_dir, "results.jsonl")
     csv_path = os.path.join(args.out_dir, "summary.csv")
+    errors_in_any = None
 
     results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
     with open(jsonl_path, "w", encoding="utf-8") as jf:
@@ -278,6 +286,8 @@ def main():  # noqa: C901
                 out = run_fn(cfg)
             except Exception as e:
                 out = {"error": str(e)}
+                errors_in_any = True
+
             out["_elapsed_sec"] = round(time.time() - t0, 3)
             rec = {"cfg": cfg, "out": out, "_i": i}
             jf.write(json.dumps(rec) + "\n")
@@ -307,6 +317,8 @@ def main():  # noqa: C901
             row = [rank, out.get(metric), out.get("_elapsed_sec")] + [cfg.get(k) for k in fieldnames]
             w.writerow(row)
 
+    if errors_in_any:
+        print("[ablate.py] WARNING: got an error in at least one run")  # consider checking and printing which
     print(f"[ablate.py] Wrote {jsonl_path}")
     print(f"[ablate.py] Wrote {csv_path}")
 

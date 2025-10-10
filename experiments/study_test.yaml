@@ -1,0 +1,24 @@
+schema: study/v1
+study_name: tinycnn_tester
+metric: val/acc
+goal: max
+
+baseline:
+  dataset: cifar10
+  subset: 256
+  epochs: 100
+  batch_size: 128
+  seed: 0
+  model: tinycnn
+  optimizer: adam
+  lr: 0.001
+  wd: 0.0
+  ema: false
+  out_dir: "runs/tinycnn_tester"
+
+
+variants:
+  - name: "without_dropout"
+    overrides: {dropout: 0.0, run_id: "without_dropout"}
+  - name: "with_dropout"
+    overrides: {dropout: 0.3, run_id: "with_dropout"}

@@ -1,17 +1,18 @@
 base:
   model: "tinycnn"
-  epochs: 1
+  epochs: 2
   batch_size: 128
   dataset: "cifar10"
   subset: 256
   num_workers: 0
   seed: 0
+  run_id: "with_and_without_dropout"
 
 grid:
   dropout: [0.0, 0.3]
-  lr: [0.003, 0.001]
-  wd: [0.0, 0.0005]
-  seed: [0, 1]
+  lr: [0.001]
+  wd: [0.0]
+  seed: [0]
 
 
 metric: "val/acc"
