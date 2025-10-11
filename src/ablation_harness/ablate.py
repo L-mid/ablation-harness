@@ -26,7 +26,7 @@ Example Usage:
 Make sure to delete previous runs before starting in same dir for intended behavoiur
 
 Current user:
-    python -m ablation_harness.ablate --config experiments/study_test.yaml --out_dir runs/tinycnn_tester
+    python -m ablation_harness.ablate --config experiments/study_test.yaml --out_dir runs/del_test
 
 
 

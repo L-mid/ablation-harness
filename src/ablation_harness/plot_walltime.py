@@ -9,6 +9,9 @@ What it does: Bar chart of wall-time per run. It will use, in order of preferenc
 Useage example:
     python -m ablation_harness.plot_walltime runs/wk2_tinycnn/results.jsonl --label-keys optimizer lr ema --out runs/wk2_tinycnn/plots
 
+Current:
+    python -m ablation_harness.plot_walltime runs/tinycnn_tester/results.jsonl --label-keys dropout  --out runs/tinycnn_tester/plots
+
 """
 
 import argparse

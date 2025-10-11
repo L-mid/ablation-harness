@@ -10,6 +10,10 @@ Useage:
 
 Optional: --watch to auto-refresh while runs append
 
+Current:
+    python -m scripts.aggregate runs/tinycnn_tester/results.jsonl --metric val/acc --goal max --cols dropout --timing _elapsed_sec --out reports/tinycnn_tester.md
+
+
 """
 
 import argparse

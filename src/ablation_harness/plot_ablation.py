@@ -7,8 +7,10 @@ Plots cfgs vs other cfgs.
 Useage:
     python -m ablation_harness.plot_ablation runs/wk2_tinycnn/results.jsonl --metric val/acc --goal max --label-keys optimizer lr ema --out runs/wk2_tinycnn/plots
 
+Current:
+    python -m ablation_harness.plot_ablation runs/tinycnn_tester/results.jsonl --metric val/acc --goal max --label-keys dropout --out runs/tinycnn_tester/plots
 
-If you do more that 10 runs = non-legible.
+If you do more than 10 runs = non-legible.
 < 10 works great!
 
 """

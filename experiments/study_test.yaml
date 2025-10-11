@@ -6,7 +6,7 @@ goal: max
 baseline:
   dataset: cifar10
   subset: 256
-  epochs: 100
+  epochs: 50
   batch_size: 128
   seed: 0
   model: tinycnn
@@ -14,7 +14,8 @@ baseline:
   lr: 0.001
   wd: 0.0
   ema: false
-  out_dir: "runs/tinycnn_tester"
+  out_dir: "runs/del_test"
+  run_id: "cifar10_tinycnn_v0"
 
 
 variants:
@@ -22,3 +23,25 @@ variants:
     overrides: {dropout: 0.0, run_id: "without_dropout"}
   - name: "with_dropout"
     overrides: {dropout: 0.3, run_id: "with_dropout"}
+
+
+
+# third party logging cfg (ingore if no-op)
+
+logging:
+  enable: true
+  dir: "runs/"        # or just "runs", run_id may work for overrides
+  backends: ["wandb", "tensorboard"]
+
+  wandb:
+    project: "ablation-harness"
+    entity: null               # your team/user if you use one
+    run_name: "cifar10_tinycnn_v0"      # make this run_id
+    tags: ["cifar10", "tinycnn", "baseline"]
+    notes: "Week 1 baseline."
+    mode: "online"            # "online" | "offline" | "disabled"
+
+  tensorboard:
+    flush_secs: 10
+
+  log_every_n_steps: 10
