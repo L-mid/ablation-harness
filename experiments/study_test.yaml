@@ -6,7 +6,7 @@ goal: max
 baseline:
   dataset: cifar10
   subset: 256
-  epochs: 50
+  epochs: 1
   batch_size: 128
   seed: 0
   model: tinycnn

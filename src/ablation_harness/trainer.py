@@ -19,6 +19,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from ablation_harness.builders import build_ema
 from ablation_harness.jsonl_metric_logger import MetricLogger
 from ablation_harness.logger import build_logger
 from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
@@ -209,10 +210,18 @@ def build_cifar10(subset=None):
 # -----------------------
 
 
-def _evaluate(model, loader, crit, dev):
+def _evaluate(model, loader, crit, dev, ema):
+    """
+    Evaluates.
+
+    Note for EMA:
+        Evaluation: Always report both live and EMA once or twice to learn how much stability you gain;
+        for your weekly report, pick one (usually EMA) and be consistent.
+    """
+
     model.eval()
     total_loss, correct, count = 0.0, 0, 0
-    with torch.no_grad():
+    with torch.no_grad(), ema.apply_to(model):
         for xb, yb in loader:
             xb, yb = xb.to(dev), yb.to(dev)
             logits = model(xb)
@@ -350,6 +359,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
     sched = _choose_lr_sched(cfg)
 
     rid, run_dir = _make_run_dir(cfg)
+    ema = build_ema(model, cfg)
 
     # ckpts
     ckpt_dir = os.path.join(run_dir, "ckpts")
@@ -383,6 +393,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 opt.step()
+                ema.update(model)
 
                 # per-batch schedulers:
                 if isinstance(sched, (torch.optim.lr_scheduler.OneCycleLR, torch.optim.lr_scheduler.CyclicLR)):
@@ -400,7 +411,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                         step=global_step,
                     )
 
-            last_val = _evaluate(model, val_loader, crit, dev)
+            last_val = _evaluate(model, val_loader, crit, dev, ema)
 
             # per-epoch schedulers:
             if sched and not isinstance(sched, (torch.optim.lr_scheduler.OneCycleLR, torch.optim.lr_scheduler.CyclicLR)):
@@ -425,11 +436,26 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                         logger.log_artifact(out_path, name="spectral_stats.jsonl")
 
             if last_val["acc"] >= best_val:
-                best_val = last_val["acc"]  # small ckpt skel, saves only model
+                best_val = last_val["acc"]  # small ckpt skel, saves all (not scheduler)
+                ckpt = {
+                    "model": model.state_dict(),
+                    "optimizer": opt.state_dict(),
+                    "ema": ema.state_dict(),
+                    "epoch": epoch,
+                }
                 torch.save(
-                    {"model_state": model.state_dict(), "cfg": cfg.__dict__, "val": last_val},
+                    {"model_state": ckpt, "cfg": cfg.__dict__, "val": last_val},
                     ckpt_path,
                 )
+            """
+            Useage of loading this checkpointer (ema specifically):
+
+                ckpt = torch.load("checkpoint.pt", map_location="cpu")
+                model.load_state_dict(ckpt["model"])
+                optimizer.load_state_dict(ckpt["optimizer"])
+                ema = EMA(model, EMAConfig(decay=0.999))
+                ema.load_state_dict(ckpt["ema"])
+            """
 
             # saving loss to the loss.jsonl explicitly (local):
             mlog.log(global_step, **{"val/loss": float(last_val["loss"]), "val/acc": float(last_val["acc"]), "epoch": epoch})

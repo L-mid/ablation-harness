@@ -128,7 +128,7 @@ def main():
         except FileNotFoundError:
             # Write a placeholder if not yet created
             args.out.parent.mkdir(parents=True, exist_ok=True)
-            args.out.write_test("_Waiting for results.jsonl..._\n", encoding="utf-8")
+            args.out.write_text("_Waiting for results.jsonl..._\n", encoding="utf-8")
             if not args.watch:  # interesting, before check?
                 return
 

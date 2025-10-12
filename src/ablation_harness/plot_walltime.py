@@ -18,26 +18,8 @@ import argparse
 import json
 import os
 import pathlib
-from datetime import datetime
 
 import matplotlib.pyplot as plt
-
-_ISO_FMT_CANDIDATES = (
-    "%Y-%m-%dT%H:%M:%S.%fZ",
-    "%Y-%m-%dT%H:%M:%S.%f",
-    "%Y-%m-%dT%H:%M:%SZ",
-    "%Y-%m-%dT%H:%M:%S",
-)
-
-
-def _parse_iso(ts):
-    """Tries to parse the time provided into the set."""
-    for fmt in _ISO_FMT_CANDIDATES:
-        try:
-            return datetime.strptime(ts, fmt)
-        except Exception:
-            pass
-    return None
 
 
 def _load_jsonl(path):
@@ -82,6 +64,7 @@ def _format_label(cfg, label_keys):
 def _get_walltime_s(d):  # ignore C901
     """Best guess get time out of cfg."""
 
+    # current method
     t = d.get("out", {})
     if isinstance(t, dict):
         if t["_elapsed_sec"] == 0.0:
@@ -89,17 +72,6 @@ def _get_walltime_s(d):  # ignore C901
         else:
             try:
                 return float((t["_elapsed_sec"]))
-            except Exception:
-                pass
-
-    # Preferred: nested timing dict
-    t = d.get("timing", {})
-    if isinstance(t, dict):
-        if "total_sec" in t:
-            return float(t["total_sec"])
-        if "epoch_times" in t and isinstance(t["epoch_times"], (list, tuple)):
-            try:
-                return float(sum(t["epoch_times"]))
             except Exception:
                 pass
 

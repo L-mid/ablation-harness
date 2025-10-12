@@ -44,6 +44,9 @@ Current user:
     usage:
         python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny --seed 799
 
+
+Supports both study + sweep schematics (needs serious cleaning).
+
 """
 
 """
