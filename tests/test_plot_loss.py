@@ -17,6 +17,10 @@ Useage:
 Usage:
     python -m ablation_harness.plot_loss runs/cifar_tiny/results.jsonl --metrics val/loss --out runs/cifar_tiny/loss
 
+
+current:
+    python -m ablation_harness.plot_loss runs/study_wk2.yaml/results.jsonl --metrics val/loss --out runs/cifar_tiny/loss
+
 """
 
 import csv

@@ -11,15 +11,17 @@ TODO:
 
 import json
 import os
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field
 from types import ModuleType
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from ablation_harness.builders import build_ema
 from ablation_harness.jsonl_metric_logger import MetricLogger
+from ablation_harness.logger import build_logger
 from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
 from ablation_harness.spectral import collect_spectral_stats
 
@@ -42,6 +44,33 @@ class SpectralDiagCfg:
     save_dir: Optional[str] = None  # if None, use run_dir
 
 
+# LOGGING: stub, not being accessed correctly (not affected by yaml). Currently uses dataclasses as law.
+@dataclass
+class WandbCfg:
+    project: str = "ablation-harness"
+    entity: Optional[str] = None
+    run_name: Optional[str] = "wk2_adam_sgd_ema_param_sweep"  # remeber to replace this with 'generic name'
+    tags: List[str] = field(default_factory=list)
+    notes: Optional[str] = None
+    mode: Literal["online", "offline", "disabled"] = "disabled"  # turn off for CLI
+    # wandb dir gets pointed at run_dir by the logger builder
+
+
+@dataclass
+class TensorBoardCfg:
+    flush_secs: int = 10
+
+
+@dataclass
+class LoggingCfg:
+    enable: bool = True
+    dir: str = "runs/logs"  # this dir is not overrided rn
+    backends: list[str] = field(default_factory=lambda: ["tensorboard"])  # wandb cannot be enabled in CLI. Remove it.
+    wandb: WandbCfg = field(default_factory=WandbCfg)
+    tensorboard: TensorBoardCfg = field(default_factory=TensorBoardCfg)
+    log_every_n_steps: int = 10
+
+
 @dataclass
 class TrainConfig:
     model: str = "mlp"  # "mlp" | "tinycnn"
@@ -49,6 +78,8 @@ class TrainConfig:
     dropout: float = 0.0
     lr: float = 1e-3
     wd: float = 0.0
+    scheduler: str = "cosine"
+    momentum: int = 0
     epochs: int = 4
     batch_size: int = 64
     seed: int = 0
@@ -60,10 +91,12 @@ class TrainConfig:
     run_id: str = "generic_any_id"
     _study: Optional[str] = None
     _variant: Optional[str] = None
-    log_every: int = 1
     optimizer: Any = None
     ema: Any = None
-    spectral_diag: Optional[SpectralDiagCfg] = None
+    decay: float = 0.9999
+
+    spectral_diag: SpectralDiagCfg = field(default_factory=SpectralDiagCfg)
+    logging: LoggingCfg = field(default_factory=LoggingCfg)
 
 
 # --------------------------
@@ -179,10 +212,18 @@ def build_cifar10(subset=None):
 # -----------------------
 
 
-def _evaluate(model, loader, crit, dev):
+def _evaluate(model, loader, crit, dev, ema):
+    """
+    Evaluates.
+
+    Note for EMA:
+        Evaluation: Always report both live and EMA once or twice to learn how much stability you gain;
+        for your weekly report, pick one (usually EMA) and be consistent.
+    """
+
     model.eval()
     total_loss, correct, count = 0.0, 0, 0
-    with torch.no_grad():
+    with torch.no_grad(), ema.apply_to(model):
         for xb, yb in loader:
             xb, yb = xb.to(dev), yb.to(dev)
             logits = model(xb)
@@ -288,51 +329,98 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
         if cfg.optimizer == "adam":
             optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
         elif cfg.optimizer == "sgd":
-            optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+            optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd, momentum=cfg.momentum)
         else:
             # AdamW as default Optim
             optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
 
         return optimizer
 
-    # should be a train_loop.py?
+    def _choose_lr_sched(cfg):
+        """Returns some base sched for Optim lr."""
+        sched = None
+        if cfg.scheduler == "cosine":
+            sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg.epochs)
+        elif cfg.scheduler == "step":
+            sched = torch.optim.lr_scheduler.StepLR(opt, step_size=cfg.step_size, gamma=cfg.gamma)
+        elif cfg.scheduler == "onecycle":
+            sched = torch.optim.lr_scheduler.OneCycleLR(
+                opt,
+                max_lr=cfg.lr,
+                steps_per_epoch=len(train_loader),
+                epochs=cfg.epochs,
+            )
+
+        return sched
+
+    # should be a train.py?
 
     model.to(dev)
     crit = nn.CrossEntropyLoss()
     opt = _choose_optimizer(cfg)
-    global_step = 0
+    sched = _choose_lr_sched(cfg)
 
     rid, run_dir = _make_run_dir(cfg)
+    ema = build_ema(model, cfg)
 
     # ckpts
     ckpt_dir = os.path.join(run_dir, "ckpts")
     os.makedirs(ckpt_dir, exist_ok=True)
     ckpt_path = os.path.join(ckpt_dir, "ckpts.pt")
 
-    log_every = getattr(cfg, "log_every", 1)
+    # logging
+    logger = build_logger(cfg)
+    logger.on_run_start(cfg)
+
     loss_log_path = os.path.join(run_dir, "loss.jsonl")
+
+    # loss + metric extra stats
     best_val = float("-inf")
     last_val = {}
     spect_stats = None
 
+    global_step = 0
+
     with MetricLogger(loss_log_path, fmt="jsonl") as mlog:
         for epoch in range(cfg.epochs):
+            logger.on_epoch_start(epoch)
             print(f"[trainer.py:] current epoch: {epoch}")
             model.train()
             for xb, yb in train_loader:
                 xb, yb = xb.to(dev), yb.to(dev)
                 logits = model(xb)
                 loss = crit(logits, yb)
+
+                # backward, step, etc.
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
                 opt.step()
+                ema.update(model)
+
+                # per-batch schedulers:
+                if isinstance(sched, (torch.optim.lr_scheduler.OneCycleLR, torch.optim.lr_scheduler.CyclicLR)):
+                    sched.step()
 
                 global_step += 1
 
-                if global_step % log_every == 0:
-                    mlog.log(global_step, **{"train/loss": float(loss.item()), "epoch": epoch})
+                if global_step % cfg.logging.log_every_n_steps == 0:
+                    mlog.log(global_step, **{"train/loss": float(loss.item()), "epoch": epoch})  # saves locally
+                    logger.log_metrics(
+                        {
+                            "train/loss": float(loss.item()),
+                            "train/lr": float(getattr(sched, "get_last_lr", lambda: [opt.param_groups[0]["lr"]])()[0]),
+                        },
+                        step=global_step,
+                    )
 
-            last_val = _evaluate(model, val_loader, crit, dev)
+            last_val = _evaluate(model, val_loader, crit, dev, ema)
+
+            # per-epoch schedulers:
+            if sched and not isinstance(sched, (torch.optim.lr_scheduler.OneCycleLR, torch.optim.lr_scheduler.CyclicLR)):
+                if isinstance(sched, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                    sched.step(last_val["loss"])  # after you compute it
+                else:
+                    sched.step()
 
             # spectral:
             if cfg.spectral_diag and cfg.spectral_diag.enabled:
@@ -344,17 +432,40 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
                     os.makedirs(save_dir, exist_ok=True)
                     out_path = os.path.join(save_dir, f"epoch_spectrals/spectral_epoch{epoch:03d}.json")
                     with open(out_path, "w", encoding="utf-8") as f:
-                        json.dump({"epoch": epoch, "stats": spect_stats}, f, ensure_ascii=False, indent=2)
+                        json.dump({"epoch": epoch, "stats": spect_stats}, f, ensure_ascii=False, indent=2)  # local save
+
+                        # to logger:
+                        logger.log_artifact(out_path, name="spectral_stats.jsonl")
 
             if last_val["acc"] >= best_val:
-                best_val = last_val["acc"]  # small ckpt skel, saves only model
+                best_val = last_val["acc"]  # small ckpt skel, saves all (not scheduler)
+                ckpt = {
+                    "model": model.state_dict(),
+                    "optimizer": opt.state_dict(),
+                    "ema": ema.state_dict(),
+                    "epoch": epoch,
+                }
                 torch.save(
-                    {"model_state": model.state_dict(), "cfg": cfg.__dict__, "val": last_val},
+                    {"model_state": ckpt, "cfg": cfg.__dict__, "val": last_val},
                     ckpt_path,
                 )
+            """
+            Useage of loading this checkpointer (ema specifically):
 
-            # saving loss to the loss.jsonl explicitly:
+                ckpt = torch.load("checkpoint.pt", map_location="cpu")
+                model.load_state_dict(ckpt["model"])
+                optimizer.load_state_dict(ckpt["optimizer"])
+                ema = EMA(model, EMAConfig(decay=0.999))
+                ema.load_state_dict(ckpt["ema"])
+            """
+
+            # saving loss to the loss.jsonl explicitly (local):
             mlog.log(global_step, **{"val/loss": float(last_val["loss"]), "val/acc": float(last_val["acc"]), "epoch": epoch})
+
+            logger.log_metrics({"val/loss": float(last_val["loss"]), "val/acc": float(last_val["acc"])}, step=global_step)
+            logger.on_epoch_end(epoch)
+        # (Optional) log files/plots you generate
+        # logger.log_artifact("runs/.../loss.png", name="loss_plot.png")
 
         # spectral:
         if cfg.spectral_diag and cfg.spectral_diag.enabled:
@@ -363,6 +474,8 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
             save_dir = cfg.spectral_diag.save_dir or run_dir
             with open(os.path.join(save_dir, "spectral_final.json"), "w", encoding="utf-8") as f:
                 json.dump({"epoch": "final", "stats": final_stats}, f, ensure_ascii=False, indent=2)
+
+        logger.on_run_end()
 
         return {
             "seed": cfg.seed,
@@ -386,12 +499,11 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """
     Entry used by ablate.py -- keep this signature stable.
     """
-    # Fill defualts via dataclass. Does not allow unknown keys.
-    defaults = TrainConfig()
-    sd = config_dict.get("spectral_diag")
-    if isinstance(sd, dict):
-        config_dict = {**config_dict, "spectral_diag": SpectralDiagCfg(**sd)}
-    cfg = replace(defaults, **config_dict)
+
+    from ablation_harness.config_resolve import resolve_config
+
+    cfg: TrainConfig = resolve_config(config_dict)
+
     return train_and_eval(cfg)
 
 

@@ -6,7 +6,7 @@ goal: max
 baseline:
   dataset: cifar10
   subset: 256
-  epochs: 1
+  epochs: 25
   batch_size: 128
   seed: 0
   model: tinycnn
@@ -14,15 +14,22 @@ baseline:
   lr: 0.001
   wd: 0.0
   ema: false
+  momentum: 0
+  decay: 0.9999
+  out_dir: "runs/logs"
+  run_id: "study_wk2_tinycnn"
+
 
 variants:
-  - name: "varient_1"
-    overrides: {optimizer: adam, lr: 0.0003, wd: 0.0, ema: false}
-  - name: "varient_2"
-    overrides: {optimizer: adam, lr: 0.001,  wd: 0.0, ema: true}
-  - name: "varient_3"
-    overrides: {optimizer: sgd,  lr: 0.01,   wd: 0.0005, ema: false, momentum: 0.9}  # momentum is novel cfg
-  - name: "varient_4"
-    overrides: {optimizer: sgd,  lr: 0.003,  wd: 0.0005, ema: false, momentum: 0.9}
-  - name: "varient_5"
-    overrides: {optimizer: sgd,  lr: 0.003,  wd: 0.0005, ema: true,  momentum: 0.9}
+  - name: "baseline"
+    overrides: {optimizer: adam, lr: 0.001, wd: 0.0, ema: false, run_id: "baseline"}
+  - name: "lr_0_0003"
+    overrides: {optimizer: adam, lr: 0.0003, wd: 0.0, ema: false, run_id: "lr_0_0003"}
+  - name: "ema_baseline"
+    overrides: {optimizer: adam, lr: 0.001,  wd: 0.0, ema: true, decay: 0.999, run_id: "ema_baseline"}
+  - name: "sgd"
+    overrides: {optimizer: sgd,  lr: 0.003,   wd: 0.0005, ema: false, momentum: 0.9, run_id: "sgd"}
+  - name: "sgd_lr_0_01"
+    overrides: {optimizer: sgd,  lr: 0.01,  wd: 0.0005, ema: false, momentum: 0.9, run_id: "sgd_lr_0_01"}
+  - name: "sgd_ema"
+    overrides: {optimizer: sgd,  lr: 0.003,  wd: 0.0005, ema: true, decay: 0.999, momentum: 0.9, run_id: "sgd_ema"}

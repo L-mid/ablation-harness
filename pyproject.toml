@@ -22,6 +22,8 @@ dev = [
     "ruff>=0.5",
     "black>=24.8",
     "isort>=5.13",
+    "tensorboard",
+    "wandb",
     ]
 
 torch-cpu = [

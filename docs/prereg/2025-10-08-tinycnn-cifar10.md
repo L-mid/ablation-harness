@@ -23,4 +23,4 @@ H2: EMA helps only for SGD at small lr.
 - (Optional) Next week: 3 seeds for top-2 configs → seed variance plot.
 **Deviations:** None planned.
 
-**Commit/tag:** <link to commit>.
+**Commit/tag:** <link to commit once made>.

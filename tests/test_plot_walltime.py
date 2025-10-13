@@ -95,4 +95,6 @@ def test_walltime_plot_smoke(tmp_path):
     )
     assert proc.returncode == 0, f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
 
-    assert p.exists()
+    out_path = graph_path / "walltime_bar.png"  # default output of this plotter
+
+    assert out_path.exists() and out_path.stat().st_size > 0
