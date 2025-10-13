@@ -1,0 +1,25 @@
+schema: study/v1
+study_name: tinycnn_cifar10_wk2
+metric: val/acc
+goal: max
+
+baseline:
+  dataset: cifar10
+  subset: 256
+  epochs: 25
+  batch_size: 128
+  seed: 0
+  model: tinycnn
+  optimizer: adam
+  lr: 0.001
+  wd: 0.0
+  ema: false
+  momentum: 0
+  decay: 0.9999
+  out_dir: "runs/logs"
+  run_id: "study_wk2_tinycnn"
+
+
+variants:
+  - name: "lr_0_0003"
+    overrides: {optimizer: adam, lr: 0.0003, wd: 0.0, ema: false, run_id: "lr_0_0003"}
