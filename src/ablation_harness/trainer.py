@@ -49,7 +49,7 @@ class SpectralDiagCfg:
 class WandbCfg:
     project: str = "ablation-harness"
     entity: Optional[str] = None
-    run_name: Optional[str] = "generic_name"
+    run_name: Optional[str] = "wk2_adam_sgd_ema_param_sweep"  # remeber to replace this with 'generic name'
     tags: List[str] = field(default_factory=list)
     notes: Optional[str] = None
     mode: Literal["online", "offline", "disabled"] = "online"
@@ -64,8 +64,8 @@ class TensorBoardCfg:
 @dataclass
 class LoggingCfg:
     enable: bool = True
-    dir: str = "runs/replace_me"
-    backends: List[Literal["wandb", "tensorboard"]] = field(default_factory=lambda: ["tensorboard"])
+    dir: str = "runs/logs"  # this dir is not overrided rn
+    backends: list[str] = field(default_factory=lambda: ["wandb", "tensorboard"])
     wandb: WandbCfg = field(default_factory=WandbCfg)
     tensorboard: TensorBoardCfg = field(default_factory=TensorBoardCfg)
     log_every_n_steps: int = 10
@@ -79,6 +79,7 @@ class TrainConfig:
     lr: float = 1e-3
     wd: float = 0.0
     scheduler: str = "cosine"
+    momentum: int = 0
     epochs: int = 4
     batch_size: int = 64
     seed: int = 0
@@ -92,6 +93,7 @@ class TrainConfig:
     _variant: Optional[str] = None
     optimizer: Any = None
     ema: Any = None
+    decay: float = 0.9999
 
     spectral_diag: SpectralDiagCfg = field(default_factory=SpectralDiagCfg)
     logging: LoggingCfg = field(default_factory=LoggingCfg)
@@ -327,7 +329,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
         if cfg.optimizer == "adam":
             optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
         elif cfg.optimizer == "sgd":
-            optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)
+            optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd, momentum=cfg.momentum)
         else:
             # AdamW as default Optim
             optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.wd)

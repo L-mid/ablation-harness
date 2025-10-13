@@ -1,4 +1,7 @@
 """
+Might want to fix how it shows many runs (text too big/something)
+
+
 What it does: Bar chart of wall-time per run. It will use, in order of preference:
     timing.total_sec
     total_time_s
