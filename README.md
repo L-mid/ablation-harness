@@ -12,3 +12,4 @@ Quickstart:
 
 ### Wkly Reports (for 4 wks):
 - [Week 1 Baseline — TinyCNN on CIFAR-10](docs/reports/wk1_baseline.md)
+- [Week 2 Param Sweep — TinyCNN on CIFAR-10](docs/reports/wk2_adam_sgd_ema_param_sweep.md)
