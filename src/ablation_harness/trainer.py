@@ -52,7 +52,7 @@ class WandbCfg:
     run_name: Optional[str] = "wk2_adam_sgd_ema_param_sweep"  # remeber to replace this with 'generic name'
     tags: List[str] = field(default_factory=list)
     notes: Optional[str] = None
-    mode: Literal["online", "offline", "disabled"] = "online"  # turn off for CLI
+    mode: Literal["online", "offline", "disabled"] = "disabled"  # turn off for CLI
     # wandb dir gets pointed at run_dir by the logger builder
 
 
@@ -65,7 +65,7 @@ class TensorBoardCfg:
 class LoggingCfg:
     enable: bool = True
     dir: str = "runs/logs"  # this dir is not overrided rn
-    backends: list[str] = field(default_factory=lambda: ["wandb", "tensorboard"])  # wandb cannot be enabled in CLI. Remove it.
+    backends: list[str] = field(default_factory=lambda: ["tensorboard"])  # wandb cannot be enabled in CLI. Remove it.
     wandb: WandbCfg = field(default_factory=WandbCfg)
     tensorboard: TensorBoardCfg = field(default_factory=TensorBoardCfg)
     log_every_n_steps: int = 10
