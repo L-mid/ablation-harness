@@ -3,10 +3,10 @@
 This week I did a param sweep for the first time.
 
 **TL:DR - Sweep results**
-Winner: adam, lr 0.001, ema=off; with val/acc = 0.10% (+-0 noise (no additional seeds tested)), total wallclock time = x.xx
+Winner: adam, lr 0.001, ema=off; with val/acc = 0.10% (+-0 noise (no additional seeds tested)), total wallclock time = 140 secs
 
 
-# Setup:
+### Setup:
 
 Study: tinycnn_cifar_wk2
 Goal: max val/acc
@@ -25,6 +25,7 @@ Potential action for next week: Trial new sweeps with cfg 1; run mini-sweep on e
 
 - **Source:** `runs/wk2_param_sweep/results.jsonl`
 - **Metric:** `val/acc` (maximize)
+
 | config | optimizer | lr | wd | ema | val/acc | _elapsed_sec |
 |---|---|---|---|---|---|---|
 | 1| adam| 0.001| 0.0| off| 0.100| 147.7 |
@@ -34,17 +35,24 @@ Potential action for next week: Trial new sweeps with cfg 1; run mini-sweep on e
 | 5| sgd| 0.01| 0.0005| off| 0.100| 122.8 |
 | 6| sgd| 0.003| 0.0005| on| 0.100| 122.2 |
 
-- Note, the 1.0 val/acc in all cfgs tried (random guessing).
+- Note, the 1.0 val/acc in all cfgs tied (random guessing).
 
 
 ## Plots:
-- Ablation table & best-config highlight: ![Loss per cfg](../assets/wk2_assets/loss.png)
+- ## Ablation table & best-config highlight:
 
-- Loss curves (val): ![Val/Acc bars](../assets/wk2_assets/ablation_bar_val_acc.png)
+![Val/Acc bars](../assets/wk2_assets/ablation_bar_val_acc.png) 
 
-- Wall-time bars: ![walltime bars](../assets/wk2_assets/walltime_bar.png)
+- ## Loss curves (val):
 
-Acc vals are espeically notable: all are level at random chance (1.0). It appears this TinyCNN regardless of these paramaterizations does not generalize until 50+ epochs as demonstraighted before.
+![Loss per cfg](../assets/wk2_assets/loss.png)
+
+- ## Wall-time bars:
+
+![walltime bars](../assets/wk2_assets/walltime_bar.png)
+
+
+Acc vals are espeically notable: all are level at random chance (1.0). It appears this TinyCNN regardless of these paramaterizations does not generalize until 50+ epochs as demonstrated in prev expereiments.
 So no major desion can be made on final results, only trends.
 No overfitting signs.
 
