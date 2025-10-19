@@ -43,8 +43,6 @@ Running command:
 
 1) Ablation plot (plotting cfg bars vs other cfg bars):
 
-    ![Val/Acc bars](../assets/wk3_assets/ablation_bar_val_acc.png)
-
     python -m ablation_harness.plot_ablation \
     runs/wk3_seed_sweeps/results.jsonl \
     --metric val/acc \
@@ -67,8 +65,6 @@ Running command:
 
 3) Loss Plots:
 
-    ![Loss per cfg](../assets/wk3_assets/loss.png)
-
     python -m ablation_harness.plot_loss \
     runs/wk3_seed_sweeps/wk3_seed_sweeps/wk3_seed_sweeps__tinycnn__cifar10__dro0__adam__lr0.001__wd0__ema0__seed=0/loss.jsonl \
     runs/wk3_seed_sweeps/wk3_seed_sweeps/wk3_seed_sweeps__tinycnn__cifar10__dro0__adam__lr0.001__wd0__ema0__seed=1/loss.jsonl \
@@ -90,8 +86,6 @@ Running command:
     --metric val/acc \
     --label-fields optim.optimizer \
     --out runs/wk3_seed_sweeps/plots/seed_variance
-
-![Seed variance](../assets/wk3_assets/seed_variance.png)
 
 
 5)  Walltime plot
