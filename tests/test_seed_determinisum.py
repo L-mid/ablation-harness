@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 import torch
 
+from ablation_harness.models.builder import TinyCNN
 from ablation_harness.seed_utils import seed_everything
-from ablation_harness.trainer import TinyCNN
 
 
 @pytest.mark.skipif(torch.cuda.is_available(), reason="CPU determinism only")

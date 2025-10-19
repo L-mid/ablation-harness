@@ -1,14 +1,8 @@
 """
-UNTESTED.
-
-
 Plots cfgs vs other cfgs.
 
 Useage:
     python -m ablation_harness.plot_ablation runs/wk2_tinycnn/results.jsonl --metric val/acc --goal max --label-keys optimizer lr ema --out runs/wk2_tinycnn/plots
-
-Current:
-    python -m ablation_harness.plot_ablation runs/tinycnn_tester/results.jsonl --metric val/acc --goal max --label-keys dropout --out runs/tinycnn_tester/plots
 
 If you do more than 10 runs = non-legible.
 < 10 works great!
@@ -88,11 +82,33 @@ def _get_metric_value(d, metric_name):
     return None
 
 
+def _deep_get(d, path, default=None):
+    """Read nested dict/list values via dot paths like 'ema.enabled' or 'blocks.0.width'."""
+    cur = d
+    for part in path.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, (list, tuple)):
+            try:
+                idx = int(part)
+            except ValueError:
+                return default
+            if 0 <= idx < len(cur):
+                cur = cur[idx]
+            else:
+                return default
+        else:
+            return default
+    return cur
+
+
 def _format_label(cfg, label_keys):
-    """Formats bool (on/off), commas (,), or using run_id, run."""
+    """Formats labels from (possibly nested) keys; bools as on/off; skips missing."""
     parts = []
     for k in label_keys:
-        v = cfg.get(k, None)
+        v = _deep_get(cfg, k, None)
+        if v is None:
+            continue
         if isinstance(v, bool):
             v = "on" if v else "off"
         parts.append(f"{k}={v}")
@@ -104,7 +120,7 @@ def main():
     p.add_argument("results", help="Path to results.jsonl")
     p.add_argument("--metric", default="val/acc", help="Metric key to plot (default: val/acc)")
     p.add_argument("--goal", choices=["max", "min"], default="max", help="Optimization direction")
-    p.add_argument("--label-keys", nargs="*", default=["optimizer", "lr", "ema"], help="Config keys to show in x-labels")
+    p.add_argument("--label-keys", nargs="*", default=["seed", "optim.optimizer"], help="Config keys to show in x-labels")
     p.add_argument("--out", required=True, help="Output directory for .png")
     p.add_argument("--filename", default=None, help="Override output filename")
     args = p.parse_args()

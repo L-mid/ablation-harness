@@ -1,28 +1,48 @@
 schema: study/v1
-study_name: tinycnn_tester
-metric: val/acc
-goal: max
+study_name: tinycnn_dropout
+out_dir: "runs/"
+seed: 0
+metric: val/acc   # ensure these are not flagged as "not in runtime cfg"
+goal: "max"
 
-baseline:
+
+epochs: 1
+device: null     # auto
+deterministic: true
+clean_run: false
+
+
+data:
   dataset: cifar10
   subset: 256
-  epochs: 1
   batch_size: 128
-  seed: 0
-  model: tinycnn
+  num_workers: 0
+  pin_memory: false
+
+model:
+  name: tinycnn
+  hidden: 64
+  dropout: 0.0
+
+optim:
   optimizer: adam
   lr: 0.001
   wd: 0.0
-  ema: false
-  out_dir: "runs/del_test"
-  run_id: "cifar10_tinycnn_v0"
+  momentum: 0.9
+
+sched:
+  name: cosine
+
+ema:
+  enabled: false
+  decay: 0.9999
 
 
 variants:
   - name: "without_dropout"
-    overrides: {dropout: 0.0, run_id: "without_dropout"}
+    overrides: {model: {dropout: 0.0}}
   - name: "with_dropout"
-    overrides: {dropout: 0.3, run_id: "with_dropout"}
+    overrides: {model: {dropout: 0.3}}
 
 
 
@@ -30,18 +50,13 @@ variants:
 
 logging:
   enable: true
-  dir: "runs/"        # or just "runs", run_id may work for overrides
-  backends: ["wandb", "tensorboard"]
-
+  backends: ["tensorboard"]   # or ["tensorboard","wandb"]
+  log_every_n_steps: 1
   wandb:
-    project: "ablation-harness"
-    entity: null               # your team/user if you use one
-    run_name: "cifar10_tinycnn_v0"      # make this run_id
-    tags: ["cifar10", "tinycnn", "baseline"]
-    notes: "Week 1 baseline."
-    mode: "online"            # "online" | "offline" | "disabled"
-
+    mode: offline
+    project: ablation-harness
+    run_name: null
+    tags: ["wk3","dropout"]
+    notes: "seed repeats v1"
   tensorboard:
     flush_secs: 10
-
-  log_every_n_steps: 10

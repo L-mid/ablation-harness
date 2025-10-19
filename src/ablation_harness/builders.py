@@ -8,6 +8,9 @@ class NoOpEMA:
     def state_dict(self, *_, **__):
         pass
 
+    def load_state_dict(self, *_, **__):
+        pass
+
     def apply_to(self, model):  # context manager that does nothing
         from contextlib import nullcontext
 

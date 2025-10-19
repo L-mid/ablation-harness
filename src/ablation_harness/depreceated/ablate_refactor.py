@@ -1,5 +1,4 @@
 import argparse
-import csv
 import importlib
 import itertools
 import json
@@ -11,29 +10,23 @@ from typing import Any, Callable, Dict, List, Tuple
 import yaml
 
 """
-Example Usage:
+Example Usage: (note: ablate_refactor)
 
 (baseline.yaml: study/example set):
-    python -m ablation_harness.ablate --config experiments/baseline.yaml --out_dir runs/writeup_baseline --seed 11
+    python -m ablation_harness.ablate_refactor --config experiments/baseline.yaml --out_dir runs/writeup_baseline --seed 11
 
 (synthetic):
-    python -m ablation_harness.ablate --config configs/toy_moons.yaml --out_dir runs/moons
+    python -m ablation_harness.ablate_refactor --config configs/toy_moons.yaml --out_dir runs/moons
 
 (tiny real):
-    python -m ablation_harness.ablate --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
+    python -m ablation_harness.ablate_refactor --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny
 
 
 Make sure to delete previous runs before starting in same dir for intended behavoiur
 
 Current user:
-    python -m ablation_harness.ablate --config experiments/study_wk2.yaml --out_dir runs/del_this_test
+    python -m ablation_harness.ablate_refactor --config configs/tiny_cifar.yaml --out_dir runs/cifar_tiny --trainer ablation_harness.train_refactor
 
-
-
-
---dry-run param (explicit command):
-    python -m ablation_harness.ablate --config configs/toy_moons.yaml --dry-run
-    # makes no dirs. works with toy_moons only. no seeding
 
 
 --seed precedence rule:
@@ -211,73 +204,9 @@ def main():  # noqa: C901
 
     trainer_mod = importlib.import_module(args.trainer)
     run_fn: Callable[[dict[str, Any]], dict[str, Any]] = getattr(trainer_mod, "run")
-    preflight_fn = getattr(trainer_mod, "preflight")
-
-    plan = {
-        "run_count": len(runs),
-        "metric": metric,
-        "goal": goal,
-        "out_dir": args.out_dir,
-        "runs": [],
-    }
-
-    # dry run exclusives
-
-    def _diff(base, cfg):
-        return {k: v for k, v in cfg.items() if base.get(k) != v}
-
-    def _grid_cardinality(runs):
-        from collections import defaultdict
-
-        vals = defaultdict(set)
-        for r in runs:
-            for k, v in r["cfg"].items():
-                vals[k].add(v)
-        return {k: len(vs) for k, vs in vals.items()}
-
-    def _print_summary(plan, top=10, errors_only=False):
-        runs = plan["runs"]
-        errs = [r for r in runs if (r.get("preflight") or {}).get("ok") is False]
-        oks = [r for r in runs if (r.get("preflight") or {}).get("ok") is not False]
-        eprint(f"DRY-RUN 'OK!'  runs={len(runs)}  ok={len(oks)}  errors={len(errs)}")
-        eprint(f"metric={plan['metric']}  goal={plan['goal']}")
-        eprint(f"out_dir={plan['out_dir']}")
-        eprint("grid:", _grid_cardinality(runs))
-        base = runs[0]["cfg"] if runs else {}
-        to_show = errs if errors_only else runs[:top]
-        for r in to_show:
-            pf = r.get("preflight") or {}
-            eprint(f"[{r['i']:>3}] diff={_diff(base, r['cfg'])}  pf_ok={pf.get('ok', 'NA')}  params={pf.get('params','?')}")
-
-    # If DRY-RUN: build a plan and optionally ask trainer to preflight each cfg
-    if args.dry_run:
-        for i, cfg in enumerate(runs):
-            entry = {
-                "i": i,
-                "cfg": cfg,
-                "planned_artifacts": [
-                    os.path.join(args.out_dir, "results.jsonl"),
-                    os.path.join(args.out_dir, "summary.csv"),
-                ],
-                "preflight": None,
-            }
-            try:
-                entry["preflight"] = preflight_fn({**cfg, "dry_run": True})
-            except Exception as e:
-                entry["preflight"] = {"ok": False, "error": str(e)}
-            plan["runs"].append(entry)
-        # IMPORTANT: not makedirs, no writes
-
-        print(json.dumps(plan, indent=2))  # prints the full dict
-        _print_summary(plan)  # prints dict summary
-
-        # exit nonzero if any error
-        bad = any((r.get("preflight") or {}).get("ok") is False for r in plan["runs"])
-        raise SystemExit(2 if bad else 0)
 
     os.makedirs(args.out_dir, exist_ok=True)
     jsonl_path = os.path.join(args.out_dir, "results.jsonl")
-    csv_path = os.path.join(args.out_dir, "summary.csv")
     errors_in_any = None
 
     results: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
@@ -310,20 +239,9 @@ def main():  # noqa: C901
         reverse=(goal == "max"),
     )
 
-    # Write CSV summary
-    fieldnames = list(sorted(set(k for cfg, _ in results for k in cfg.keys())))
-    with open(csv_path, "w", newline="", encoding="utf-8") as cf:
-        w = csv.writer(cf)
-        header = ["rank", metric, "_elapsed_sec"] + fieldnames
-        w.writerow(header)
-        for rank, (cfg, out) in enumerate(sorted_rows, 1):
-            row = [rank, out.get(metric), out.get("_elapsed_sec")] + [cfg.get(k) for k in fieldnames]
-            w.writerow(row)
-
     if errors_in_any:
         print("[ablate.py] WARNING: got an error in at least one run")  # consider checking and printing which
     print(f"[ablate.py] Wrote {jsonl_path}")
-    print(f"[ablate.py] Wrote {csv_path}")
 
 
 if __name__ == "__main__":

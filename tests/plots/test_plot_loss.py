@@ -9,22 +9,17 @@ Covers:
 - Auto-zoom behavior for nearly-flat series (import module)
 
 
-UNTESTED for csv input outside these tests.
-
-
-Useage:
 
 Usage:
-    python -m ablation_harness.plot_loss runs/cifar_tiny/results.jsonl --metrics val/loss --out runs/cifar_tiny/loss
+    python -m ablation_harness.plot_loss \
+    runs/cifar_tiny/results.jsonl \
+    --metrics val/loss \
+    --out runs/cifar_tiny/loss
 
-
-current:
-    python -m ablation_harness.plot_loss runs/study_wk2.yaml/results.jsonl --metrics val/loss --out runs/cifar_tiny/loss
 
 """
 
-import csv
-import importlib.util
+import importlib
 import json
 import os
 import subprocess
@@ -44,16 +39,6 @@ def _write_jsonl(p: Path, *, rows=None, ys=None):
     with p.open("w", encoding="utf-8") as f:
         for r in rows:
             f.write(json.dumps(r) + "\n")
-
-
-def _write_csv(p: Path):
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=["_i", "val/loss"])
-        w.writeheader()
-        w.writerow({"_i": 0, "val/loss": 2.0})
-        w.writerow({"_i": 1, "val/loss": 1.5})
-        w.writerow({"_i": 2, "val/loss": 1.2})
 
 
 def _run_plot(cmd, cwd=None):

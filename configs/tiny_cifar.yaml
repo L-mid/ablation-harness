@@ -1,12 +1,13 @@
+sweep_name: tinycnn_dropout_sweep
+
 base:
   model: "tinycnn"
-  epochs: 2
+  epochs: 1
   batch_size: 128
   dataset: "cifar10"
   subset: 256
   num_workers: 0
   seed: 0
-  run_id: "with_and_without_dropout"
 
 grid:
   dropout: [0.0, 0.3]

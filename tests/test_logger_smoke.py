@@ -1,6 +1,6 @@
-"""Add test for why wandb isn't working + the dir path/not listen to dataclass problem."""
+"""Simple tests."""
 
-from ablation_harness.logger import MultiLogger, NullLogger
+from ablation_harness.logging.multi import MultiLogger, NullLogger
 
 
 def test_null_logger_no_crash():
