@@ -1,3 +1,7 @@
+"""
+Tests plot variance.
+"""
+
 import json
 from pathlib import Path
 
@@ -26,12 +30,12 @@ def test_plot_variance_creates_png(tmp_path: Path):
 
     # compose mini josnl mock.
     rows = [
-        _row({"optimizer": "adam", "lr": 0.001, "ema": False}, 0, 0.42),
-        _row({"optimizer": "adam", "lr": 0.001, "ema": False}, 1, 0.44),
-        _row({"optimizer": "adam", "lr": 0.001, "ema": False}, 2, 0.41),
-        _row({"optimizer": "sgd", "lr": 0.01, "ema": False}, 0, 0.35),
-        _row({"optimizer": "sgd", "lr": 0.01, "ema": False}, 1, 0.36),
-        _row({"optimizer": "sgd", "lr": 0.01, "ema": False}, 2, 0.34),
+        _row({"optim": {"optimizer": "adam", "lr": 0.001, "wd": 0.0}, "ema": {"enabled": False}}, 0, 0.42),
+        _row({"optim": {"optimizer": "adam", "lr": 0.001, "wd": 0.0}, "ema": {"enabled": False}}, 1, 0.44),
+        _row({"optim": {"optimizer": "adam", "lr": 0.001, "wd": 0.0}, "ema": {"enabled": False}}, 2, 0.41),
+        _row({"optim": {"optimizer": "sgd", "lr": 0.01, "wd": 0.0, "momentum": 0.9}, "ema": {"enabled": False}}, 0, 0.35),
+        _row({"optim": {"optimizer": "sgd", "lr": 0.01, "wd": 0.0, "momentum": 0.9}, "ema": {"enabled": False}}, 1, 0.36),
+        _row({"optim": {"optimizer": "sgd", "lr": 0.01, "wd": 0.0, "momentum": 0.9}, "ema": {"enabled": False}}, 2, 0.34),
     ]
     _write_jsonl(results, rows)
 

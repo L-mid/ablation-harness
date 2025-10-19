@@ -20,6 +20,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from ablation_harness.builders import build_ema
+from ablation_harness.flaky_detector import detect_flaky_ops
 from ablation_harness.jsonl_metric_logger import MetricLogger
 from ablation_harness.logger import build_logger
 from ablation_harness.seed_utils import make_generator, seed_everything, seed_worker
@@ -49,7 +50,7 @@ class SpectralDiagCfg:
 class WandbCfg:
     project: str = "ablation-harness"
     entity: Optional[str] = None
-    run_name: Optional[str] = "wk2_adam_sgd_ema_param_sweep"  # remeber to replace this with 'generic name'
+    run_name: Optional[str] = "generic name"
     tags: List[str] = field(default_factory=list)
     notes: Optional[str] = None
     mode: Literal["online", "offline", "disabled"] = "disabled"  # turn off for CLI
@@ -272,6 +273,7 @@ def train_and_eval(cfg: TrainConfig) -> Dict[str, Any]:  # noqa: C901
     g = make_generator(process_seed)
 
     dev = device()
+    _ = detect_flaky_ops(device=str(dev))
 
     # --- Data ---
     if cfg.dataset == "moons":
@@ -502,7 +504,7 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
 
     from ablation_harness.config_resolve import resolve_config
 
-    cfg: TrainConfig = resolve_config(config_dict)
+    cfg: TrainConfig = resolve_config(config_dict)  # fix for this: switch from searching cfg to searching here
 
     return train_and_eval(cfg)
 

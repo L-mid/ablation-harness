@@ -1,0 +1,64 @@
+schema: study/v1
+study_name: wk3_seed_sweeps
+out_dir: "runs/"
+seed: [0, 1, 2]   # list seeds if you want seed sweeping.
+metric: val/acc
+goal: "max"
+
+
+epochs: 50   # 50 this time (from 25).
+device: cpu
+deterministic: true
+clean_run: false
+
+
+data:
+  dataset: cifar10
+  subset: 256
+  batch_size: 128
+  num_workers: 0
+  pin_memory: false
+
+model:
+  name: tinycnn
+  hidden: 64
+  dropout: 0.0
+
+optim:
+  optimizer: adam
+  lr: 0.001
+  wd: 0.0
+  momentum: 0.9
+
+sched:
+  name: cosine
+
+ema:
+  enabled: false
+  decay: 0.9999
+
+
+variants:   # top two cfgs from last week (based primarly on val/loss)
+  - name: "baseline"
+    overrides: {optim: {optimizer: adam, lr: 0.001, wd: 0.0}}
+  - name: "sgd_lr_0_01"
+    overrides: {optim: {optimizer: sgd,  lr: 0.01,  wd: 0.0005, momentum: 0.9}}
+
+
+
+# third party logging cfg (ingore if no-op)
+
+logging:
+  enable: true
+  backends: ["tensorboard", "wandb"]   # or ["tensorboard","wandb"]
+  log_every_n_steps: 1
+
+  wandb:
+    mode: online
+    project: ablation-harness
+    run_name: "wk3_seed_sweep_tinycnn"
+    tags: ["wk3","sweep"]
+    notes: "seed repeats v1"
+
+  tensorboard:
+    flush_secs: 10

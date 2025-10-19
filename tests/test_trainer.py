@@ -1,8 +1,10 @@
+"""Tests TinyCNN model."""
+
 import time
 
 import torch
 
-from ablation_harness.trainer import TinyCNN
+from ablation_harness.models.builder import TinyCNN
 
 
 def test_params_under_10k():

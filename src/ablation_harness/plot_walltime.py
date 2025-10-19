@@ -2,18 +2,12 @@
 Might want to fix how it shows many runs (text too big/something)
 
 
-What it does: Bar chart of wall-time per run. It will use, in order of preference:
-    timing.total_sec
-    total_time_s
-    epoch_times (sums them)
-    fallback: end_time - start_time if ISO timestamps are present.
+What it does: Bar chart of wall-time per run.
 
 
 Useage example:
     python -m ablation_harness.plot_walltime runs/wk2_tinycnn/results.jsonl --label-keys optimizer lr ema --out runs/wk2_tinycnn/plots
 
-Current:
-    python -m ablation_harness.plot_walltime runs/tinycnn_tester/results.jsonl --label-keys dropout  --out runs/tinycnn_tester/plots
 
 """
 
@@ -21,6 +15,7 @@ import argparse
 import json
 import os
 import pathlib
+from typing import Any, Dict, List
 
 import matplotlib.pyplot as plt
 
@@ -53,15 +48,33 @@ def _get_cfg(d):
     return {}
 
 
-def _format_label(cfg, label_keys):
-    """Formats the graph's labels (cfg parts allocated by --label-keys)."""
+def _get_path(d: Dict[str, Any], path: str) -> Any:
+    """
+    Get a nested value via dotted or slash-separated path.
+    Example: "metrics.val.acc" or "metrics/val/acc".
+    """
+    keys = path.replace("/", ".").split(".")
+    cur: Any = d
+    for k in keys:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return cur
+
+
+def _label_from_cfg(cfg: Dict[str, Any], label_fields: List[str]) -> str:
+    """
+    Build a human-readable label from selected cfg fields.
+    Missing fields are shown as '-'.
+    """
     parts = []
-    for k in label_keys:
-        v = cfg.get(k, None)
-        if isinstance(v, bool):
-            v = "on" if v else "off"
-        parts.append(f"{k}={v}")
-    return ", ".join(parts) if parts else cfg.get("run_id", "run")
+    for f in label_fields:
+        v = _get_path(cfg, f)
+        if isinstance(v, float):
+            # keep concise formatting
+            v = f"{v:g}"
+        parts.append(f"{f.split('.')[-1]}={v if v is not None else '-'}")
+    return ", ".join(parts) if parts else "config"
 
 
 def _get_walltime_s(d):  # ignore C901
@@ -98,7 +111,7 @@ def main():
             print("[plot_walltime] WARNING: This row had no walltime.")
             continue
         cfg = _get_cfg(d)
-        label = _format_label(cfg, args.label_keys)
+        label = _label_from_cfg(cfg, args.label_keys)
         rows.append((label, float(wt)))
 
     if not rows:

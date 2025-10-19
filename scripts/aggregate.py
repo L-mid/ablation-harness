@@ -1,17 +1,16 @@
 """
 cfg style assumed:
 
-{"cfg":{"optimizer":"adam","lr":0.001,"wd":0.0,"ema":false,"epochs":25},
+{"cfg":{"optimizer":"adam","lr":0.001,"wd":0.0,"ema":false,"epochs":25},        # update, can also do nested (v1/study schema).
  "out":{"val/acc":0.42,"val/loss":2.11,"_elapsed_sec":142.7,"run_id":"..."}}
+
+
+Optional: --watch to auto-refresh while runs append
 
 
 Useage:
     python -m scripts.aggregate runs/wk2_tinycnn/results.jsonl --metric val/acc --goal max --cols optimizer lr wd ema --timing _elapsed_sec --out reports/wk2_ablation.md
 
-Optional: --watch to auto-refresh while runs append
-
-Current:
-    python -m scripts.aggregate runs/tinycnn_tester/results.jsonl --metric val/acc --goal max --cols dropout --timing _elapsed_sec --out reports/tinycnn_tester.md
 
 
 """
@@ -22,10 +21,53 @@ import time
 from pathlib import Path
 
 
+def _deep_get(d, path, default=None):
+    """Read nested dict/list values via dot paths like 'ema.enabled' or 'blocks.0.width'.
+    Keys containing '/' (e.g., 'val/acc') are treated literally and NOT split."""
+    if d is None or path is None:
+        return default
+    cur = d
+    # split only on dots; leave slashes (e.g., 'val/acc') intact
+    for part in str(path).split("."):
+        if isinstance(cur, dict):
+            if part in cur:
+                cur = cur[part]
+            else:
+                return default
+        elif isinstance(cur, (list, tuple)):
+            try:
+                idx = int(part)
+            except ValueError:
+                return default
+            if 0 <= idx < len(cur):
+                cur = cur[idx]
+            else:
+                return default
+        else:
+            return default
+    return cur
+
+
+def _parse_src_key(key: str, default_src: str):
+    """Return ('cfg'|'out', stripped_key). Defaults to default_src if no prefix."""
+    if key.startswith("cfg."):
+        return "cfg", key[4:]
+    if key.startswith("out."):
+        return "out", key[4:]
+    return default_src, key
+
+
+def _get_value(cfg, out, key, default=None, default_src="cfg"):
+    """Fetch from cfg/out based on optional 'cfg.'/'out.' prefix, with dot paths."""
+    src, path = _parse_src_key(key, default_src)
+    base = cfg if src == "cfg" else out
+    return _deep_get(base, path, default)
+
+
 def read_jsonl(path: Path):
     """
     Reads a jsonl file.
-        Takes its rows str, and puts them in: rows = [].
+        Takes it's rows str, and puts them in: rows = [].
     """
     rows = []
     with path.open("r", encoding="utf-8") as f:
@@ -43,17 +85,16 @@ def read_jsonl(path: Path):
 
 def normalize_row(row, metric_key, timing_key):
     """Fetch essential keys from json/jsonl."""
-
     cfg = row.get("cfg", {})
     out = row.get("out", {})
-    metric = out.get(metric_key)
-    timing = out.get(timing_key) if timing_key else None
+    # Allow metric/timing from out.* or cfg.* (default: out)
+    metric = _get_value(cfg, out, metric_key, default=None, default_src="out")
+    timing = _get_value(cfg, out, timing_key, default=None, default_src="out") if timing_key else None
     return cfg, out, metric, timing
 
 
 def to_markdown(rows, cfg_cols, metric_key, timing_key):
-    """Emits cfgs given to .md."""
-    # Header
+    """Emits cfg/out columns to .md; supports nested dot paths and src prefixes."""
     hdr = ["config"] + cfg_cols + [metric_key]
     if timing_key:
         hdr += [timing_key]
@@ -61,18 +102,16 @@ def to_markdown(rows, cfg_cols, metric_key, timing_key):
     lines.append("| " + " | ".join(hdr) + " |")
     lines.append("|" + "|".join("---" for _ in hdr) + "|")
 
-    # Examines each config to give certain aspects
-    # Builds markdown body
     for i, (cfg, out, metric, timing) in enumerate(rows, start=1):
         vals = [str(i)]
         for k in cfg_cols:
-            v = cfg.get(k, "")
+            v = _get_value(cfg, out, k, default="", default_src="cfg")
             if isinstance(v, bool):
-                v = "on" if v else "off"  # defaults to off on wrong key
+                v = "on" if v else "off"
             vals.append(str(v))
-        vals.append(f"{metric:.3f}" if isinstance(metric, (int, float)) else str(metric))
+        vals.append(f"{metric:.3f}" if isinstance(metric, (int, float)) else ("" if metric is None else str(metric)))
         if timing_key:
-            v = out.get(timing_key, timing)
+            v = _get_value(cfg, out, timing_key, default=timing, default_src="out")
             vals.append(f"{v:.1f}" if isinstance(v, (int, float)) else (str(v) if v is not None else ""))
         lines.append("| " + "| ".join(vals) + " |")
     return "\n".join(lines) + "\n"
