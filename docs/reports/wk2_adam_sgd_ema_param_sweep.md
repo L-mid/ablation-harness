@@ -41,7 +41,7 @@ Potential action for next week: Trial new sweeps with cfg 1; run mini-sweep on e
 ## Plots:
 - ## Ablation table & best-config highlight:
 
-![Val/Acc bars](../assets/wk2_assets/ablation_bar_val_acc.png) 
+![Val/Acc bars](../assets/wk2_assets/ablation_bar_val_acc.png)
 
 - ## Loss curves (val):
 
