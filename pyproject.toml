@@ -12,7 +12,7 @@ dependencies = [
     ]
 
 [project.scripts]
-ablate = "ablation_harness.ablate:main"
+ablate = "ablation_harness.cli:main"
 
 [project.optional-dependencies]
 dev = [
