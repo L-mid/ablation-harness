@@ -1,6 +1,6 @@
 [project]
 name = "ablation-harness"
-version = "0.1.0a0"
+version = "0.0.0"
 description = "Ablation harness + reproducibility template"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,17 @@ dependencies = [
 
 [project.scripts]
 ablation-harness = "ablation_harness.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["ablation_harness*"]
 
 [project.optional-dependencies]
 dev = [
