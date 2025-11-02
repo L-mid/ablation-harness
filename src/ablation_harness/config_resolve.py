@@ -101,4 +101,40 @@ def resolve_config(d: Dict[str, Any]):
     """Entry point: resolves default (RuntimeConfig) with overrides (provided cfg_dict: d)."""
     spec = resolve_spec(d)
     rt = to_runtime(spec)
+
+    # ---- BEGIN new: lift underscore keys from raw dict into RuntimeConfig ----
+    # helpers
+    def _get(path, default=None):
+        cur = d
+        for k in path:
+            if not isinstance(cur, dict) or k not in cur:
+                return default
+            cur = cur[k]
+        return cur
+        # Detect diffusion task
+
+    has_diffusion = "_diffusion!" in d
+    model_name = (getattr(spec.model, "name", "") or "").lower()
+    rt.task = "diffusion" if (has_diffusion or "unet" in model_name) else rt.task
+
+    # Train fields
+    rt.total_steps = _get(["_train!", "total_steps"], rt.total_steps)
+    rt.grad_clip = _get(["_train!", "grad_clip"], rt.grad_clip)
+    rt.amp = _get(["_train!", "amp"], rt.amp)
+    # Evaluate-every: prefer explicit eval.every, else fall back to logging cadence
+    rt.eval_every = _get(["_eval!", "every"], rt.eval_every) or _get(["logging", "log_every_n_steps"], rt.eval_every)
+
+    # Diffusion fields
+    rt.beta_schedule = _get(["_diffusion!", "beta_schedule"], rt.beta_schedule)
+
+    # Eval fields (sampling/metrics)
+    rt.eval_sampler = _get(["_eval!", "sampler"], rt.eval_sampler)
+    rt.eval_nfe = _get(["_eval!", "nfe"], _get(["_diffusion!", "steps"], rt.eval_nfe))
+    rt.eval_n_samples = _get(["_eval!", "n_samples"], rt.eval_n_samples)
+    rt.fid_stats = _get(["_eval!", "fid_stats"], rt.fid_stats)
+
+    # Data convenience (shuffle)
+    rt.data_shuffle = _get(["data", "_shuffle!"], rt.data_shuffle)
+    # ---- END new ----
+
     return rt, spec  # trainer uses rt; logger builder can read spec.logging, etc.

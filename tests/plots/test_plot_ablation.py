@@ -45,7 +45,7 @@ def test_ablation_plot_smoke(tmp_path, write_jsonl_rows):
         [
             sys.executable,
             "-m",
-            "ablation_harness.plot_ablation",
+            "ablation_harness.plots.plot_ablation",
             str(jsonl_path),
             "--metric",
             "val/acc",

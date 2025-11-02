@@ -73,7 +73,7 @@ def test_plot_loss_jsonl(tmp_path: Path):
     cmd = [
         sys.executable,
         "-m",
-        "ablation_harness.plot_loss",
+        "ablation_harness.plots.plot_loss",
         str(logs),
         "--metrics",
         "val/loss",
@@ -95,7 +95,7 @@ def test_plot_loss_multiple_inputs_with_labels(tmp_path: Path):
     cmd = [
         sys.executable,
         "-m",
-        "ablation_harness.plot_loss",
+        "ablation_harness.plots.plot_loss",
         str(a),
         str(b),
         "--metrics",
@@ -131,7 +131,7 @@ def test_ylim_enforced_and_summary_printed_import(tmp_path: Path, monkeypatch, c
 
     out_png = tmp_path / "ylims.png"
 
-    mod = _import_plotter_from_module("ablation_harness.plot_loss")
+    mod = _import_plotter_from_module("ablation_harness.plots.plot_loss")
 
     # Simulate CLI
     monkeypatch.setenv("PYTHONWARNINGS", "ignore")
@@ -175,7 +175,7 @@ def test_auto_zoom_for_flat_series_import(tmp_path: Path, monkeypatch):
     _write_jsonl(logs, ys=ys)
     out_png = tmp_path / "flat.png"
 
-    mod = _import_plotter_from_module("ablation_harness.plot_loss")
+    mod = _import_plotter_from_module("ablation_harness.plots.plot_loss")
     # No --ylim here; rely on auto-zoom.
     monkeypatch.setattr(
         sys,
