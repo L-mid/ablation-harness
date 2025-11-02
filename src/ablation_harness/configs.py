@@ -133,3 +133,17 @@ class RuntimeConfig:
     sched_name: str
     ema_enabled: bool
     ema_decay: float
+
+    task: str | None = None  # "diffusion" or None/classification
+    total_steps: int = 10_000  # used for steps-based loops
+    eval_every: int = 5_000  # evaluate every N train steps
+    grad_clip: float = 1.0
+    amp: bool = False
+
+    beta_schedule: str = "linear"  # "linear" | "cosine" | "learned" (later)
+    eval_sampler: str = "ddpm"
+    eval_nfe: int = 50
+    eval_n_samples: int = 10_000
+    fid_stats: str | None = None
+
+    data_shuffle: bool = True

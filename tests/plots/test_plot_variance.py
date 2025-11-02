@@ -5,7 +5,7 @@ Tests plot variance.
 import json
 from pathlib import Path
 
-from ablation_harness.plot_variance import compute_group_stats, plot_variance
+from ablation_harness.plots.plot_variance import compute_group_stats, plot_variance
 
 
 def _write_jsonl(path: Path, rows):

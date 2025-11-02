@@ -30,7 +30,7 @@ def test_walltime_plot_smoke(tmp_path, write_jsonl_rows):
 
     """
     Useage:
-        python -m ablation_harness.plot_walltime
+        python -m ablation_harness.plots.plot_walltime
         runs/wk2_tinycnn/results.jsonl
         --label-keys optimizer lr ema
         --out runs/wk2_tinycnn/plots
@@ -40,7 +40,7 @@ def test_walltime_plot_smoke(tmp_path, write_jsonl_rows):
         [
             sys.executable,
             "-m",
-            "ablation_harness.plot_walltime",
+            "ablation_harness.plots.plot_walltime",
             str(jsonl_path),
             "--label-keys",
             "optim.optimizer optim.lr optim.wd ema.enabled",
