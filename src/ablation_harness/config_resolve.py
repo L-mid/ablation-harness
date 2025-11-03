@@ -10,7 +10,7 @@ from .configs import RuntimeConfig, StudySpec
 D = TypeVar("D")
 
 
-ALLOW_UNKNOWN_KEYS = {"goal", "metric"}  # allow anywhere
+ALLOW_UNKNOWN_KEYS = {"goal", "metric", "schema"}  # allow anywhere
 
 
 def strict_merge(dc_obj: D, updates: Mapping[str, Any], path: str = "cfg") -> D:

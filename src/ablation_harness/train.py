@@ -6,6 +6,7 @@ Training entrypoint.
 from __future__ import annotations
 
 from typing import Any, Dict
+from types import SimpleNamespace
 
 import torch
 
@@ -17,6 +18,43 @@ from .eval.generative import evaluate_diffusion
 from .logging.multi import build_logger
 from .run_layout import resolve_run_layout  # 🔹
 from .seed_utils import make_generator, seed_everything, seed_worker
+
+def _merge_eval_from_rt(eval_spec, rt):
+    """
+    Bridge underscore-lifted defaults from RuntimeConfig into the eval spec,
+    but do NOT override any explicit values already set in eval_spec.
+    Supports dict- or attr-style objects.
+    """
+    # read helpers
+    def _get(obj, k, default=None):
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(k, default)
+        return getattr(obj, k, default)
+    
+    # start from whatever the spec already has (dict or attrs)
+    if isinstance(eval_spec, dict):
+        merged = dict(eval_spec)
+    else:
+        merged = {
+           "sampler": _get(eval_spec, "sampler", None),
+           "nfe": _get(eval_spec, "nfe", None),
+           "n_samples": _get(eval_spec, "n_samples", None),
+           "metrics": _get(eval_spec, "metrics", None),
+           "fid_stats": _get(eval_spec, "fid_stats", None),
+           "sample_seed": _get(eval_spec, "sample_seed", None),
+           "save_images": _get(eval_spec, "save_images", None), 
+        }
+
+    # fill only if missing, using rt defaults (lifted from _eval! / _diffusion!)
+    merged.setdefault("sampler", getattr(rt, "eval_sampler", None))
+    merged.setdefault("nfe", getattr(rt, "eval_nfe", None))
+    merged.setdefault("n_samples", getattr(rt, "eval_n_samples", None))
+    merged.setdefault("fid_stats", getattr(rt, "fid_stats", None))
+
+# return as attribute-style object (works with evaluate_diffusion)
+    return SimpleNamespace(**{k: v for k, v in merged.items() if v is not None})
 
 
 def _is_diffusion(rt) -> bool:
@@ -146,9 +184,9 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
 
     from .builders import build_ema
     from .checkpoint import save_best_if_better, save_last, try_resume
-    from .diffusion.core import ddpm_loss, get_beta_schedule, precompute_q
+    from .tasks.diffusion.core import ddpm_loss, get_beta_schedule, precompute_q
     from .logging.jsonl_metric_logger import MetricLogger
-    from .models.unet_cifar32 import build_unet_model
+    from .tasks.diffusion.models.unet_cifar32 import build_unet_model
     from .optimizers import build_optimizer
 
     # ----- Build model/optimizer/EMA -----
@@ -213,8 +251,8 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                     model_eval.load_state_dict(model.state_dict())
 
                 eval_out_dir = os.path.join(layout.root, "eval", f"step_{global_step:06d}")
-                scores = evaluate_diffusion(model_eval, spec.eval, q, eval_out_dir)
-                last_eval = scores
+                eval_spec = evaluate_diffusion(model_eval, spec.eval, q, eval_out_dir)
+                scores = evaluate_diffusion(model_eval, eval_spec, q, eval_out_dir)
                 fid = scores.get("fid", None)
                 if fid is not None:
                     logger.log_metrics({"val/fid": float(fid), "step": global_step})

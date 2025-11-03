@@ -5,7 +5,7 @@ seed: 0
 metric: val/acc   # ensure these are not flagged as "not in runtime cfg"
 goal: "max"
 
-
+ 
 epochs: 1
 device: null     # auto
 deterministic: true
