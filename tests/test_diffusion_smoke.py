@@ -1,12 +1,12 @@
 import torch
 
-from ablation_harness.tasks.diffusion.core import (
+from ablation_harness.tasks.diffusion.models.unet_cifar32 import UNetCifar32
+from ablation_harness.tasks.diffusion.schedule import (
     ddpm_loss,
     get_beta_schedule,
     precompute_q,
     sample_ddpm,
 )
-from ablation_harness.tasks.diffusion.models.unet_cifar32 import UNetCifar32
 
 
 def test_ddpm_loss_forward():

@@ -1,0 +1,106 @@
+schema: study/v1
+study_name: diffusion_test_schema
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "baseline-linear-50nfe"
+
+
+device: null     # auto
+deterministic: true
+clean_run: false
+
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 0
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  # ...
+
+ema:
+  enabled: true
+  decay: 0.9999
+
+diffusion:
+  enabled: true
+  beta_schedule: "linear"   # swap to "cosine" / "learned"
+  # for learned, you’ll set a ckpt path below in 'train' or 'sampler'
+  # ask about this if it comes up
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 4 # 100_000
+  grad_clip: 1.0
+  amp: false
+
+
+# evaluations cfg:
+eval:
+  quick: true
+
+  grid:
+    enabled: true
+    every: 2 # 1000
+    sampler: ddim
+    nfe: 4 # 20
+    n_samples: 4 #36
+    save_images: true
+
+  # KID trend (moderate)
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+  # Milestone FID (heavier), run only if kid improved >= 3%
+  fid_milestone:
+    enabled: false
+    every: 20000
+    run_if_kid_improved_pct: 3.0
+    sampler: ddpm
+    nfe: 50
+    n_samples: 5000
+    fid_stats: "cifar10_inception_stats.npz"
+
+  # Final/hold-out at end of training
+  final:
+    enabled: false  # true in real run but test first
+    at_end: true
+    sampler: ddpm
+    nfe: 50
+    n_samples: 50000
+    fid_stats: "cifar10_inception_stats.npz"
+
+
+variants: []
+
+
+
+# third party logging cfg (ingore if no-op)
+
+logging:
+  enable: true
+  backends: ["tensorboard","wandb"]   # or ["tensorboard","wandb"]
+  log_every_n_steps: 100
+
+  wandb:
+    mode: online
+    project: noise_sched
+    run_name: null
+    tags: ["test"]
+    notes: "This run was a test"
+  tensorboard:
+    flush_secs: 10

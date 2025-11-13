@@ -10,12 +10,89 @@ DEFAULT_OUT = Path("C:/ML/runs") if os.name == "nt" else Path.home() / "ml_runs"
 
 
 @dataclass
+class TrainCfg:
+    total_steps: int = 10_000
+    grad_clip: float = 1.0
+    amp: bool = False
+
+
+@dataclass
+class EvalGridCfg:
+    enabled: bool = True
+    every: int = 1_000
+    sampler: Literal["ddpm", "ddim"] = "ddim"
+    nfe: int = 20
+    n_samples: int = 36
+    batch_size: int = 64
+    save_images: bool = True
+    sample_seed: int = 0  # fixed seed for apples-to-apples grids
+
+
+@dataclass
+class EvalKidCfg:
+    enabled: bool = True
+    every: int = 4_000
+    sampler: Literal["ddpm", "ddim"] = "ddim"
+    nfe: int = 20
+    n_samples: int = 1_024
+    repeats: int = 3  # average across repeats for stability
+    batch_size: int = 64
+    feature_cache: Optional[str] = None  # optional path to cached real features
+
+
+@dataclass
+class EvalFidMilestoneCfg:
+    enabled: bool = True
+    every: int = 20_000
+    sampler: Literal["ddpm", "ddim"] = "ddpm"
+    nfe: int = 50
+    n_samples: int = 5_000
+    batch_size: int = 64
+    fid_stats: Optional[str] = None  # e.g., "cifar10_inception_stats.npz"
+    run_if_kid_improved_pct: float = 3.0  # gate heavy eval on KID improvement
+
+
+@dataclass
+class EvalFinalCfg:
+    enabled: bool = True
+    at_end: bool = True  # run once at training end
+    sampler: Literal["ddpm", "ddim"] = "ddpm"
+    nfe: int = 50
+    n_samples: int = 50_000  # report-grade
+    batch_size: int = 64
+    fid_stats: Optional[str] = None
+    save_images: bool = False
+
+
+# --- Top-level eval config (keeps legacy fields, adds structured tasks) ---
+
+
+@dataclass
+class EvalsCfg:
+    # top-level toggles under `eval:` (your YAML has only `quick` today)
+    quick: bool = False
+
+    # structured eval tasks (all optional so you can omit them in YAML)
+    grid: EvalGridCfg = field(default_factory=EvalGridCfg)
+    kid: EvalKidCfg = field(default_factory=EvalKidCfg)
+    fid_milestone: EvalFidMilestoneCfg = field(default_factory=EvalFidMilestoneCfg)
+    final: EvalFinalCfg = field(default_factory=EvalFinalCfg)
+
+
+@dataclass
+class DiffusionCfg:
+    enabled: bool = False  # sets rt.task = "diffusion" when True
+    beta_schedule: Literal["linear", "cosine", "learned"] = "linear"
+
+
+@dataclass
 class DataCfg:
     dataset: Literal["moons", "cifar10"] = "moons"
     subset: Optional[int] = None
     batch_size: int = 64
     num_workers: int = 0
     pin_memory: bool = False
+    shuffle: bool = True
 
 
 @dataclass
@@ -42,13 +119,6 @@ class SchedCfg:
 class EMACfg:
     enabled: bool = False
     decay: float = 0.9999
-
-
-@dataclass
-class SpectralDiagCfg:  # currently unused!
-    enabled: bool = False
-    every_n_epochs: int = 1
-    topk: int = 5
 
 
 @dataclass
@@ -83,6 +153,7 @@ class StudySpec:
     study_name: str = "study"
     seed: int = 0
     epochs: int = 4
+    total_steps: int = 100
     out_dir: str = str(DEFAULT_OUT)  # absolute recommended
     run_id: str = "run"  # filled by planner; can be ignored in YAML
 
@@ -96,7 +167,9 @@ class StudySpec:
     sched: SchedCfg = field(default_factory=SchedCfg)
     ema: EMACfg = field(default_factory=EMACfg)
     logging: LoggingCfg = field(default_factory=LoggingCfg)
-    spectral_diag: SpectralDiagCfg = field(default_factory=SpectralDiagCfg)
+    train: TrainCfg = field(default_factory=TrainCfg)
+    eval: EvalsCfg = field(default_factory=EvalsCfg)
+    diffusion: DiffusionCfg = field(default_factory=DiffusionCfg)
 
 
 # ---- Runtime (what trainer actually needs) ----
@@ -140,10 +213,10 @@ class RuntimeConfig:
     grad_clip: float = 1.0
     amp: bool = False
 
-    beta_schedule: str = "linear"  # "linear" | "cosine" | "learned" (later)
+    beta_schedule: str = "linear"  # "linear" | "cosine"
     eval_sampler: str = "ddpm"
     eval_nfe: int = 50
     eval_n_samples: int = 10_000
     fid_stats: str | None = None
 
-    data_shuffle: bool = True
+    shuffle: bool = True

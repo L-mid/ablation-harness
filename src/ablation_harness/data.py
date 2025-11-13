@@ -23,7 +23,12 @@ def build_synthetic_moons(n=1024, seed=0) -> Tuple[TensorDataset, TensorDataset]
 
 def build_cifar10(subset=None):
     assert tv is not None, "torchvision required for CIFAR10"
-    tfm = tv.transforms.Compose([tv.transforms.ToTensor()])
+    tfm = tv.transforms.Compose(
+        [
+            tv.transforms.ToTensor(),  # [0,1]
+            tv.transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),  # -> [-1,1]
+        ]
+    )
     tr = tv.datasets.CIFAR10(root=".", train=True, download=True, transform=tfm)
     va = tv.datasets.CIFAR10(root=".", train=False, download=True, transform=tfm)
     if subset is not None and subset < len(tr):

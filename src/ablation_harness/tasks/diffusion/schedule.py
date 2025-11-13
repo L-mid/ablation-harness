@@ -78,7 +78,6 @@ def make_t_schedule(K: int, nfe: int, device):
 @torch.no_grad()
 def p_sample_step(model, x_t, t, t_prev, q, eta=1.0):
     eps_pred = model(x_t, t)  # t: [B]
-    print("[esp_pred]", eps_pred.shape)
 
     a_bar_t = q["alpha_bar"][t]  # [B]
 
@@ -93,8 +92,6 @@ def p_sample_step(model, x_t, t, t_prev, q, eta=1.0):
     sqrt_om_t = torch.sqrt(1 - a_bar_t).view(-1, 1, 1, 1)
 
     x0_pred = (x_t - sqrt_om_t * eps_pred) / (sqrt_ab_t + 1e-8)
-    print("[x_t]", x_t.shape)
-    print("[x0_pred]", x0_pred.shape)
 
     # DDIM-like update; guard numerics & shapes
     num = 1 - a_bar_prev
@@ -105,10 +102,7 @@ def p_sample_step(model, x_t, t, t_prev, q, eta=1.0):
     sigma = eta * torch.sqrt(frac * one_minus_ratio).view(-1, 1, 1, 1)
     dir_xt = torch.sqrt(a_bar_prev).view(-1, 1, 1, 1) * x0_pred
 
-    print("dir_xt:", dir_xt.shape)
-
     noise = sigma * torch.randn_like(x_t)
-    print("[noise]", noise.shape)
 
     B = x_t.shape[0]
     # instead of leaving it as (B,)

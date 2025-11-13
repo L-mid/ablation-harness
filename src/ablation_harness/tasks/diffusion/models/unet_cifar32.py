@@ -124,7 +124,7 @@ class Up(nn.Module):
 
 # ---- unet ----
 class UNetCifar32(nn.Module):
-    def __init__(self, in_channels=3, out_channels=3, base_channels=128, channel_mults=(1, 2, 2, 2), num_res_blocks=2, dropout=0.1, time_hidden=512, gn_groups=32, debug=True):
+    def __init__(self, in_channels=3, out_channels=3, base_channels=32, channel_mults=(1, 2, 2, 2), num_res_blocks=2, dropout=0.1, time_hidden=512, gn_groups=32, debug=False):
         super().__init__()
 
         self.debug = debug
@@ -195,16 +195,18 @@ class UNetCifar32(nn.Module):
         return h
 
 
-def build_unet_model(name: str, **kw):
+def build_unet_model(cfg: str, **kw):
+    name = cfg.model_name
+
     if name == "unet_cifar32":
         return UNetCifar32(
             in_channels=kw.get("in_channels", 3),
             out_channels=kw.get("out_channels", 3),
-            base_channels=kw.get("base_channels", 128),
+            base_channels=kw.get("base_channels", 32),
             channel_mults=tuple(kw.get("channel_mults", [1, 2, 2, 2])),
             num_res_blocks=kw.get("num_res_blocks", 2),
             dropout=kw.get("dropout", 0.1),
             time_hidden=kw.get("time_embedding", {}).get("hidden_dim", 512),
             gn_groups=kw.get("gn_groups", 32),
         )
-    raise KeyError(name)
+    raise KeyError(cfg)
