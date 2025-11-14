@@ -9,7 +9,7 @@ Usage:
 
 With diffusion
     python -m ablation_harness.cli run \
-    --config configs/baseline_test.yaml \
+    --config configs/study/baseline_test.yaml \
     --out_dir runs/del_test
 
 

@@ -5,6 +5,7 @@ Training entrypoint.
 
 from __future__ import annotations
 
+import subprocess
 from typing import Any, Dict
 
 import torch
@@ -27,11 +28,26 @@ def _is_diffusion(rt) -> bool:
     return False
 
 
+def _get_git_hash() -> str | None:
+    """Return the current git commit hash, or None if not in a git repo."""
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        )
+        return out.decode("utf-8").strip()
+    except Exception:
+        return None
+
+
 def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Running in the trainer."""
     rt: RuntimeConfig
     spec: StudySpec
     rt, spec = resolve_config(config_dict)
+
+    # --- git hash ---
+    git_hash = _get_git_hash()
 
     # 1) Setup
     seed_everything(rt.seed, deterministic=rt.deterministic)
@@ -74,12 +90,12 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     # ----
     # NEW: branch for diffusion vs classification ----
     if _is_diffusion(rt):
-        return _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path)
+        return _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path, git_hash)
     else:
-        return _run_classification(rt, device, layout, train_loader, val_loader, logger, metrics_path)
+        return _run_classification(rt, device, layout, train_loader, val_loader, logger, metrics_path, git_hash)
 
 
-def _run_classification(rt, device, layout, train_loader, val_loader, logger, metrics_path):
+def _run_classification(rt, device, layout, train_loader, val_loader, logger, metrics_path, git_hash):
     import time
 
     from .builders import build_ema
@@ -135,10 +151,11 @@ def _run_classification(rt, device, layout, train_loader, val_loader, logger, me
         "ckpt_best": str(layout.ckpts / "best_val.pt"),
         "loss_log": str(metrics_path),
         "run_time_s": time.perf_counter() - t0,
+        "git_hash": git_hash,
     }
 
 
-def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path):  # noqa C901
+def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path, git_hash):  # noqa C901
     """
     Minimal diffusion runner: K=1000 training steps, subset-NFE sampling for eval,
     EMA eval weights, and checkpoint on -FID (so 'higher is better' still holds).
@@ -163,6 +180,10 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     betas = get_beta_schedule(getattr(rt, "beta_schedule", "linear"), K, device=device)
     q = precompute_q(betas)
 
+    # --- LOG: diffusion build confirmation ---
+    msg = f"[diffusion] diffusion_enabled=True, " f"beta_schedule={getattr(rt, 'beta_schedule', 'linear')}, " f"K={K}"
+    print(msg)
+
     # Steps config
     total_steps = getattr(rt, "total_steps", 1)  # set this from adapter/resolve_config
     log_every = spec.logging.log_every_n_steps
@@ -186,7 +207,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     with MetricLogger(str(metrics_path), fmt="jsonl") as mlog:
         for batch in cycle(train_loader):
             global_step += 1
-            print_global_step = 1
+            print_global_step = 100
 
             if (global_step % print_global_step) == 0:
                 print("[train.py] Current step is:", global_step)
@@ -270,6 +291,18 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     else:
         model_eval.load_state_dict(model.state_dict())
 
+    # --- LOG: final evaluation configuration ---
+    E = spec.eval
+    FE = getattr(E, "final", None)
+
+    if FE and FE.enabled:
+        sampler = FE.sampler
+        nfe = FE.nfe
+        n_samples = FE.n_samples
+
+        msg = f"[eval.final] Running final evaluation: " f"sampler={sampler}, nfe={nfe}, n_samples={n_samples}"
+        print(msg)
+
     final_dir = os.path.join(layout.root, "eval", "final")
     out = evaluate_diffusion(model_eval, spec.eval, q, final_dir, task="final")
 
@@ -300,4 +333,5 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
         "ckpt_best": str(layout.ckpts / "best_val.pt"),
         "loss_log": str(metrics_path),
         "run_time_s": time.perf_counter() - t0,
+        "git_hash": git_hash,
     }

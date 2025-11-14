@@ -82,14 +82,23 @@ class EMA:
             if not p.requires_grad:
                 continue
             shadow = self._shadow[i]
+            # move param to shadow’s device if needed
+            p_data = p.detach()
+            if p_data.device != shadow.device:
+                p_data = p_data.to(shadow.device)
+
             shadow.mul_(self.decay).add_(p.detach(), alpha=1.0 - self.decay)  # beatiful math!!
             i += 1
 
         if self.include_buffers:
-            j = 0  # step counter for buffer shadows explicitly
+            j = 0
             for b in model.buffers():
                 buf_shadow = self._buf_shadow[j]
-                buf_shadow.mul_(self.decay).add_(b.detach(), alpha=1.0 - self.decay)  # in the case of buffers, update their math as well
+                b_data = b.detach()
+                if b_data.device != buf_shadow.device:
+                    b_data = b_data.to(buf_shadow.device)
+            
+                buf_shadow.mul_(self.decay).add_(b_data, alpha=1.0 - self.decay)
                 j += 1
 
     @torch.no_grad()
@@ -100,14 +109,23 @@ class EMA:
         for p in model.parameters():
             if not p.requires_grad:
                 continue
-            self._shadow[i].copy_(p.detach())
+            dst = self._shadow[i]
+            src = p.detach()
+            if src.device != dst.device:
+                src = src.to(dst.device)
+            dst.copy_(src)
             i += 1  # if updated correctly, i = optimizer step.
 
         if self.include_buffers:
             j = 0
             for b in model.buffers():
-                self._buf_shadow[j].copy_(b.detach())
+                dst = self._buf_shadow[j]
+                src = b.detach()
+                if src.device != dst.device:
+                    src = src.to(dst.device)
+                dst.copy_(src)
                 j += 1
+
 
     @torch.no_grad()
     def copy_to(self, model: nn.Module):
@@ -119,12 +137,21 @@ class EMA:
         for p in model.parameters():
             if not p.requires_grad:
                 continue
-            p.detach().copy_(self._shadow[i])
+            dst = p.detach()
+            src = self._shadow[i]
+            if src.device != dst.device:
+                src = src.to(dst.device)
+            dst.copy_(src)
             i += 1
+
         if self.include_buffers:
             j = 0
             for b in model.buffers():
-                b.detach().copy_(self._buf_shadow[j])
+                dst = b.detach()
+                src = self._buf_shadow[j]
+                if src.device != dst.device:
+                    src = src.to(dst.device)
+                dst.copy_(src)
                 j += 1
 
     @contextlib.contextmanager

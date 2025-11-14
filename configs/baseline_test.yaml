@@ -56,7 +56,7 @@ eval:
     n_samples: 4 #36
     save_images: true
 
-  # KID trend (moderate)
+  # KID trend (moderate)  # currently unused
   kid:
     enabled: false
     every: 4000
@@ -73,16 +73,16 @@ eval:
     sampler: ddpm
     nfe: 50
     n_samples: 5000
-    fid_stats: "cifar10_inception_stats.npz"
+    fid_stats: "stats/cifar10_inception_train.npz"
 
   # Final/hold-out at end of training
   final:
-    enabled: false  # true in real run but test first
+    enabled: true  # true in real run but test first
     at_end: true
     sampler: ddpm
-    nfe: 50
-    n_samples: 50000
-    fid_stats: "cifar10_inception_stats.npz"
+    nfe: 5
+    n_samples: 2
+    fid_stats: "stats/cifar10_inception_train.npz"   # stats/
 
 
 variants: []
@@ -94,7 +94,7 @@ variants: []
 logging:
   enable: true
   backends: ["tensorboard","wandb"]   # or ["tensorboard","wandb"]
-  log_every_n_steps: 100
+  log_every_n_steps: 1
 
   wandb:
     mode: online
