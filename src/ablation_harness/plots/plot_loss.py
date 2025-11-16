@@ -7,7 +7,7 @@ Supports:
 - CSV rows with columns like: _i, val/loss, train/loss, ...
 
 Usage:
-    python -m ablation_harness.plot_loss runs/.../results.jsonl \
+    python -m ablation_harness.plots.plot_loss runs/.../results.jsonl \
         --metrics train/loss val/loss val/acc --y2 val/acc --out runs/.../loss
 
     # auto-detect y2 (metrics that look like accuracy):
@@ -16,14 +16,10 @@ Usage:
 
 
 Current:
-    python -m ablation_harness.plot_loss
-    runs/tinycnn_tester/with_dropout/loss.jsonl
-    runs/tinycnn_tester/without_dropout/loss.jsonl
-    --metrics train/loss val/loss val/acc
-    --out runs/tinycnn_tester/loss_plots
-    --labels with_dropout without_dropout
-    --xkey epoch --title "Loss & Acc (100 epochs)"
-
+    python -m ablation_harness.plots.plot_loss \
+    runs/loss.jsonl \
+    --out runs/plots \
+    --ema 0.1
 """
 
 import argparse

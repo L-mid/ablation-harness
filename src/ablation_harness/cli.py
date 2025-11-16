@@ -7,6 +7,11 @@ Usage:
     --metric val/acc --goal max \
     --out_dir runs/del_test
 
+With diffusion
+    python -m ablation_harness.cli run \
+    --config configs/study/baseline_test.yaml \
+    --out_dir runs/del_test
+
 
 
 TODO:

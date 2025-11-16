@@ -1,11 +1,15 @@
 import io
+import math
 import os
 import tempfile
 from pathlib import Path
+from typing import Tuple, Union
 
 import torch
 
 from .run_layout import RunLayout
+
+Best = Tuple[int, float]
 
 
 def _atomic_write_bytes(path: Path, data: bytes) -> None:
@@ -51,9 +55,29 @@ def save_last(layout: RunLayout, model, opt, ema, epoch: int, best_val: float):
     _atomic_write_bytes(layout.ckpts / "last.pt", _pack(model, opt, ema, epoch, best_val))
 
 
-def save_best_if_better(layout: RunLayout, model, opt, ema, epoch: int, best_val: float, metric: float) -> float:
-    """Saves the latest ckpt only if ckpt's metrics improved (if metric > best_val). + chooses path for ckpt."""
-    if metric > best_val:
-        _atomic_write_bytes(layout.ckpts / "best_val.pt", _pack(model, opt, ema, epoch, metric))
-        return metric
-    return best_val
+best_metric = float("-inf")
+best_epoch = -1
+
+
+def metric_from_fid(fid: float | None) -> float:
+    """Map FID → "higher is better" metric; treat None/NaN/±inf as -inf"""
+    if fid is None or not math.isfinite(fid):
+        return float("-inf")
+    return -float(fid)
+
+
+def _normalize_best(best: Union[float, Best]) -> Best:
+    """Allow old float-style best; coerce to (epoch, value)"""
+    if isinstance(best, tuple):
+        return best
+    return (-1, float(best))
+
+
+def save_best_if_better(layout, model, opt, ema, epoch: int, best: Union[float, Best], metric: float, allow_ties: bool = False) -> Best:
+    """Save 'best' checkpoint iff metric improved (higher is better)."""
+    best_epoch, best_val = _normalize_best(best)
+    improved = (metric >= best_val) if allow_ties else (metric > best_val)
+    if math.isfinite(metric) and improved:
+        _atomic_write_bytes(layout.ckpts / "last.pt", _pack(model, opt, ema, epoch, best_val))
+        return (epoch, metric)
+    return (best_epoch, best_val)
