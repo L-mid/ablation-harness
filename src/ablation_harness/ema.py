@@ -97,7 +97,7 @@ class EMA:
                 b_data = b.detach()
                 if b_data.device != buf_shadow.device:
                     b_data = b_data.to(buf_shadow.device)
-            
+
                 buf_shadow.mul_(self.decay).add_(b_data, alpha=1.0 - self.decay)
                 j += 1
 
@@ -125,7 +125,6 @@ class EMA:
                     src = src.to(dst.device)
                 dst.copy_(src)
                 j += 1
-
 
     @torch.no_grad()
     def copy_to(self, model: nn.Module):

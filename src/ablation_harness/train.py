@@ -249,6 +249,14 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                     else:
                         model_eval.load_state_dict(model.state_dict())
 
+                    with torch.no_grad():
+                        s = 0.0
+                        n = 0
+                        for p_tr, p_ev in zip(model.parameters(), model_eval.parameters()):
+                            s += (p_tr - p_ev).abs().mean().item()
+                            n += 1
+                        print(f"[debug (train.py)] mean |model - model_eval| per-param avg: {s / n:.6f}")
+
                 step_dir = os.path.join(layout.root, "eval", f"step_{global_step:06d}")
                 os.makedirs(step_dir, exist_ok=True)
 

@@ -15,7 +15,7 @@ clean_run: false
 
 data:
   dataset: "cifar10"
-  subset: null
+  subset: 512
   batch_size: 4
   num_workers: 0
   shuffle: true
@@ -50,13 +50,13 @@ eval:
 
   grid:
     enabled: true
-    every: 2 # 1000
+    every: 1000
     sampler: ddim
-    nfe: 4 # 20
-    n_samples: 4 #36
+    nfe: 20
+    n_samples: 36
     save_images: true
 
-  # KID trend (moderate)  # currently unused
+  # KID trend (moderate)
   kid:
     enabled: false
     every: 4000
@@ -73,16 +73,16 @@ eval:
     sampler: ddpm
     nfe: 50
     n_samples: 5000
-    fid_stats: "stats/cifar10_inception_train.npz"
+    fid_stats: "external/ablation-harness/stats/cifar10_inception_train.npz"
 
   # Final/hold-out at end of training
   final:
-    enabled: true  # true in real run but test first
+    enabled: true
     at_end: true
     sampler: ddpm
-    nfe: 5
+    nfe: 50
     n_samples: 2
-    fid_stats: "stats/cifar10_inception_train.npz"   # stats/
+    fid_stats: "external/ablation-harness/stats/cifar10_inception_train.npz"
 
 
 variants: []
@@ -94,7 +94,7 @@ variants: []
 logging:
   enable: true
   backends: ["tensorboard","wandb"]   # or ["tensorboard","wandb"]
-  log_every_n_steps: 1
+  log_every_n_steps: 100
 
   wandb:
     mode: online
