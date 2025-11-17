@@ -31,9 +31,16 @@ class DDPMSampler(BaseSampler):
         """Full DDPM sampler call (handles steps and schedule call)."""
         torch.manual_seed(seed)
         K = self.q["betas"].numel()
-        t_schedule = torch.arange(K - 1, -1, -1, device=self.device)  # full chain
+        # Decide how many steps we actually take
+        nfe = min(self.nfe, K) if getattr(self, "nfe", None) is not None else K
+        # Choose a schedule: nfe indices between [0, K-1], then go backwards
+        t_indices = torch.linspace(0, K - 1, steps=nfe, dtype=torch.long, device=self.device)
+        t_schedule = t_indices.flip(0)  # from K-1 down to 0
+
         B, C, H, W = shape
         x = torch.randn(B, C, H, W, device=self.device)
+
         for t in t_schedule:
+            # t is scalar; expand for batch
             x = self.step(model, x, t.expand(B))
         return x.clamp(-1, 1)
