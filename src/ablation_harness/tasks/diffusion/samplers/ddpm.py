@@ -12,7 +12,7 @@ class DDPMSampler(BaseSampler):
         """Per step math."""
         q = self.q
         eps = model(x_t, t)
- 
+
         beta_t = q["betas"][t].view(-1, 1, 1, 1)
         alpha_t = q["alphas"][t].view(-1, 1, 1, 1)
         a_bar_t = q["alpha_bar"][t].view(-1, 1, 1, 1)
@@ -31,8 +31,8 @@ class DDPMSampler(BaseSampler):
         """Full DDPM sampler call (handles steps and schedule call)."""
         torch.manual_seed(seed)
         K = self.q["betas"].numel()
-            # Decide how many steps we actually take
-        nfe = min(self.nfe, K) if getattr(self, "nfe", None) is not None else K 
+        # Decide how many steps we actually take
+        nfe = min(self.nfe, K) if getattr(self, "nfe", None) is not None else K
         # Choose a schedule: nfe indices between [0, K-1], then go backwards
         t_indices = torch.linspace(0, K - 1, steps=nfe, dtype=torch.long, device=self.device)
         t_schedule = t_indices.flip(0)  # from K-1 down to 0
