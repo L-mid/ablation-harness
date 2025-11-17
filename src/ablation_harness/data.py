@@ -49,4 +49,4 @@ def build_dataset(cfg) -> tuple[Dataset, Dataset, Optional[Callable]]:
     else:
         raise ValueError(f"Unknown dataset: {cfg.dataset}")
 
-    return train_ds, val_ds, None  # ?
+    return train_ds, val_ds, None  # collate_fn?

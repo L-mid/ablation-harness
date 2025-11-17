@@ -293,7 +293,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         if hasattr(eval_cfg, "kid"):
             eval_cfg.kid.nfe = min(eval_cfg.kid.nfe, 5)
             eval_cfg.kid.n_samples = min(eval_cfg.kid.n_samples, 2)
-
+ 
     # Execute
     if task in (None, "grid"):
         run_grid()
