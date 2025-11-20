@@ -9,7 +9,7 @@ Usage:
 
 With diffusion
     python -m ablation_harness.cli run \
-    --config configs/study/baseline_test.yaml \
+    --config configs/study/E3_linear_nfe_sweep_10k.yaml \
     --out_dir runs/del_test
 
 
@@ -51,7 +51,7 @@ def main(argv=None):
     spec = planner.load_yaml(args.config)
     runs = planner.plan(spec, cli_seed=args.seed)
     if args.cmd == "plan":
-        planner.print_preview(runs, metric=args.metric)  # docstring is wrong
+        planner.print_preview(runs, metric=args.metric)
         return 0
 
     # run

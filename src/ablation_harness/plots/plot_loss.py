@@ -17,8 +17,10 @@ Usage:
 
 Current:
     python -m ablation_harness.plots.plot_loss \
-    runs/loss.jsonl \
-    --out runs/plots \
+    docs/assets/E3/noise-sched-e3a/loss/loss.jsonl \
+    docs/assets/E3/noise-sched-e3b/loss/loss.jsonl \
+    --labels E3a E3b \
+    --out docs/assets/E3/E3_plots/E3ab_loss_overlay.png \
     --ema 0.1
 """
 

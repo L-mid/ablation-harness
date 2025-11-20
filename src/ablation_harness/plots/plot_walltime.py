@@ -1,12 +1,14 @@
 """
 Might want to fix how it shows many runs (text too big/something)
-
+Can do many runs, but not in different jsonls, by the way.
+Maybe fix this.
 
 What it does: Bar chart of wall-time per run.
 
 
 Useage example:
-    python -m ablation_harness.plot_walltime runs/wk2_tinycnn/results.jsonl --label-keys optimizer lr ema --out runs/wk2_tinycnn/plots
+    python -m ablation_harness.plots.plot_walltime docs/assets/E3/noise-sched-e3a/runs/results.jsonl \
+    --label-keys eval.final.nfe --out runs/E3/plots
 
 
 """
