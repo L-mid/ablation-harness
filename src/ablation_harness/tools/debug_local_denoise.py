@@ -4,8 +4,8 @@ Debug script: visualize local denoising behaviour of the trained diffusion model
 Usage (example):
 
     python -m ablation_harness.tools.debug_local_denoise \
-      --ckpt docs/assets/E1/last.pt \
-      --out debug_denoise
+      --ckpt docs/assets/E2/last.pt \
+      --out docs/assets/E2/debug_denoise
 
 It will save a few PNGs like:
   debug_denoise_t0.png, debug_denoise_t250.png, ...

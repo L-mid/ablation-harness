@@ -71,17 +71,10 @@ def _fid_for_generated(
     batch_size: int = 64,
     seed: int = 0,
 ) -> float:
-    """
-    Generate n_samples from the model, compute Inception features,
-    and compare against precomputed stats in fid_stats_path (.npz with 'mu','sigma').
-    """
-    fid_stats_path = Path(fid_stats_path)
-    if not fid_stats_path.is_file():
-        raise FileNotFoundError(f"FID stats file not found: {fid_stats_path}")
-
+    ...
     total_batches = math.ceil(n_samples / batch_size)
     print(f"[fid] Generating {n_samples} images -- {total_batches} batches")
-    print_on_batch = 1  # make high
+    print_on_batch = 1
 
     data = np.load(fid_stats_path)
     mu_ref = data["mu"]
@@ -90,32 +83,40 @@ def _fid_for_generated(
     remaining = int(n_samples)
     feats_list = []
 
-    sampler = str(sampler).lower()
+    sampler_name = str(sampler).lower()
+    print(f"[fid] sampler={sampler_name}, nfe={nfe}, batch_size={batch_size}, seed={seed}")
 
     g_seed = int(seed)
     while remaining > 0:
         b = min(batch_size, remaining)
-
-        # print batches:
         batch_idx = (n_samples - remaining) // batch_size + 1
         if (batch_idx % print_on_batch) == 0:
-            print(f"[fid] batch {batch_idx}/{total_batches} (size={b})")
+            print(f"[fid] batch {batch_idx}/{total_batches} (size={b}, g_seed={g_seed})")
 
         imgs = _sample(
             model_ema,
             (b, 3, 32, 32),
             q=q,
-            sampler=sampler,
+            sampler=sampler_name,
             nfe=nfe,
             seed=g_seed,
             device=device,
         )
-        # Convert [-1,1] → [0,1]
+
+        # [-1,1] → [0,1]
         imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0
+
+        # TEMP: break things on purpose
+        # version A: all zeros
+        # imgs = torch.zeros_like(imgs)
+        # version B: flip vertically
+        # imgs = imgs.flip(dims=[2])
+        print("[fid]   imgs mean/std:", float(imgs.mean()), float(imgs.std()))
+
         feats = _inception_activations(imgs, device)
         feats_list.append(feats)
         remaining -= b
-        g_seed += 1  # simple per-batch seed bump, if you care
+        g_seed += 1
 
     feats_all = np.concatenate(feats_list, axis=0)
     mu_gen = np.mean(feats_all, axis=0)

@@ -5,8 +5,9 @@ bypassing evaluate_diffusion / FID.
 Usage:
 
     python -m ablation_harness.tools.debug_manual_sample \
-      --ckpt docs/assets/E1/last.pt \
-      --out debug_samples.png
+      --ckpt docs/assets/E2/last.pt \
+      --out docs/assets/E2/debug_samples_nfe_1000.png \
+      --nfe 1000
 """
 
 import argparse
@@ -65,7 +66,7 @@ def main():
     p.add_argument("--out", type=Path, default=Path("debug_samples.png"))
     p.add_argument("--K", type=int, default=1000)
     p.add_argument("--nfe", type=int, default=50)
-    p.add_argument("--num", type=int, default=12)
+    p.add_argument("--num", type=int, default=16)
     args = p.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
