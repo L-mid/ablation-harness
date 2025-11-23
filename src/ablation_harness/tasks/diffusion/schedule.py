@@ -4,15 +4,36 @@ import torch.nn.functional as F
 
 # ---------- schedules ----------
 def get_betas_linear(K: int, beta_start=1e-4, beta_end=2e-2, device="cpu"):
+    """Linear."""
     return torch.linspace(beta_start, beta_end, K, device=device)
 
 
 def get_betas_cosine(K: int, s=0.008, device="cpu"):
-    # alpha_bar(t) = cos^2((t/T + s)/(1+s) * pi/2)
+    """alpha_bar(t) = cos^2((t/T + s)/(1+s) * pi/2)"""
     steps = torch.arange(K + 1, device=device, dtype=torch.float32)
     f = torch.cos(((steps / K + s) / (1 + s)) * 3.1415926535 / 2) ** 2
     alpha_bar = f / f[0]
     betas = 1 - (alpha_bar[1:] / alpha_bar[:-1])
+    return betas.clamp(1e-8, 0.999)
+
+
+def get_betas_cosine_match_linear(K: int, s=0.008, device="cpu"):
+    """
+    Cosine schedule whose total noise mass Σβ is scaled to match
+    the linear schedule with the same K (and default beta_start/end).
+
+    Used for E5: 'beta-scale match' control.
+    """
+    betas_cos = get_betas_cosine(K, s=s, device=device)
+    betas_lin = get_betas_linear(K, device=device)
+
+    sum_cos = betas_cos.sum()
+    sum_lin = betas_lin.sum()
+
+    # Avoid any weird division-by-zero (shouldn't happen in practice).
+    scale = sum_lin / (sum_cos + 1e-12)
+
+    betas = betas_cos * scale
     return betas.clamp(1e-8, 0.999)
 
 
@@ -21,6 +42,8 @@ def get_beta_schedule(kind: str, K: int, device="cpu"):
         return get_betas_linear(K, device=device)
     if kind == "cosine":
         return get_betas_cosine(K, device=device)
+    if kind == "cosine_match_linear":
+        return get_betas_cosine_match_linear(K, device=device)
     raise ValueError(f"unknown schedule: {kind}")
 
 

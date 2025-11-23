@@ -4,9 +4,9 @@ import types
 
 import torch
 
-from ablation_harness.tasks.diffusion.samplers.ddim import DDIMSampler
-from ablation_harness.tasks.diffusion.samplers.ddpm import DDPMSampler
+from ablation_harness.tasks.diffusion.samplers import DDIMSampler, DDPMSampler
 from ablation_harness.tasks.diffusion.schedule import (
+    ddpm_loss,
     get_beta_schedule,
     make_t_schedule,
     precompute_q,
@@ -23,12 +23,12 @@ class DummyModel(torch.nn.Module):
 def test_beta_schedule_in_range_and_monotone():
     """
     Check:
-      - betas shape and (0, 1) range for both linear + cosine
+      - betas shape and (0, 1) range for both linear / cosine / cosine_match_linear
       - alpha_bar in (0, 1], strictly decreasing in t
     """
 
     K = 1000
-    for kind in ("linear", "cosine"):
+    for kind in ("linear", "cosine", "cosine_match_linear"):
         betas = get_beta_schedule(kind, K, device="cpu")
         assert betas.shape == (K,)
         assert torch.all(betas > 0)
@@ -178,3 +178,76 @@ def test_sampler_indexing_and_sampling_smoke():
     out_real = ddim_real.sample(model, shape=(B, C, H, W), seed=789)
     assert out_real.shape == (B, C, H, W)
     assert torch.isfinite(out_real).all()
+
+
+def test_cosine_match_linear_total_beta_close_to_linear():
+    """
+    Σβ(cosine_match_linear) should be within ~5% of Σβ(linear) for the same K.
+
+    This guards the intended E5 behavior: scaling the cosine schedule so its
+    total noise mass roughly matches the linear schedule.
+    """
+    device = "cpu"
+    K = 1000
+
+    betas_lin = get_beta_schedule("linear", K, device=device)
+    betas_e5 = get_beta_schedule("cosine_match_linear", K, device=device)
+
+    sum_lin = float(betas_lin.sum().item())
+    sum_e5 = float(betas_e5.sum().item())
+
+    rel_diff = abs(sum_e5 - sum_lin) / max(sum_lin, 1e-12)
+
+    # Allow a small slack in case clamping to [1e-8, 0.999] perturbs the sum
+    # away from the ideal scaling.
+    assert rel_diff <= 0.05, f"Total beta mass mismatch: " f"Σβ(linear)={sum_lin:.6f}, Σβ(cosine_match_linear)={sum_e5:.6f}, " f"rel_diff={rel_diff:.3%}"
+
+
+def test_e5_cosine_match_linear_end_to_end_smoke():
+    """
+    Tiny 'E5-style' end-to-end smoke:
+
+    - Build cosine_match_linear betas
+    - Precompute q
+    - Run one DDPM training loss step
+    - Run DDPM + DDIM sampling with that q
+
+    This exercises the full path used by E5: schedule -> q -> loss -> samplers.
+    """
+    device = "cpu"
+    K = 100  # smaller K for speed
+    B, C, H, W = 2, 3, 8, 8
+    nfe = 5
+
+    # --- schedule + q ---
+    betas = get_beta_schedule("cosine_match_linear", K, device=device)
+    q = precompute_q(betas)
+
+    # --- training-side: ddpm_loss smoke ---
+    model = DummyModel().to(device)
+    x0 = torch.randn(B, C, H, W, device=device)
+
+    loss = ddpm_loss(model, x0, q)
+    assert loss.ndim == 0
+    assert torch.isfinite(loss)
+
+    # --- sampling-side: DDPM sampler smoke on cosine_match_linear ---
+    ddpm = DDPMSampler.__new__(DDPMSampler)
+    ddpm.q = q
+    ddpm.device = device
+    ddpm.nfe = nfe
+
+    out_ddpm = ddpm.sample(model, shape=(B, C, H, W), seed=123)
+    assert out_ddpm.shape == (B, C, H, W)
+    assert torch.isfinite(out_ddpm).all()
+
+    # --- sampling-side: DDIM sampler smoke on cosine_match_linear ---
+    ddim = DDIMSampler.__new__(DDIMSampler)
+    ddim.q = q
+    ddim.device = device
+    ddim.nfe = nfe
+    ddim.eta = 0.0
+
+    out_ddim = ddim.sample(model, shape=(B, C, H, W), seed=456)
+    assert out_ddim.shape == (B, C, H, W)
+    assert torch.isfinite(out_ddim).all()
