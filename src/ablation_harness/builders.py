@@ -11,10 +11,10 @@ class NoOpEMA:
     def load_state_dict(self, *_, **__):
         pass
 
-    def copy_to(self, model): 
+    def copy_to(self, model):
         pass
 
-    def apply_to(self, model): 
+    def apply_to(self, model):
         pass
 
 

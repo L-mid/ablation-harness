@@ -145,7 +145,6 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
     with torch.no_grad():
         w = next(model_ema.parameters())
         print("[generative.py debug] eval weight mean/std:", float(w.mean()), float(w.std()))
-        
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

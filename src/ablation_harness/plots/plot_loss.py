@@ -18,7 +18,7 @@ Usage:
 Current:
 python -m ablation_harness.plots.plot_loss \
   docs/assets/E5/data/loss.jsonl \
-  --out docs/assets/e5/e5_plots 
+  --out docs/assets/e5/e5_plots
 """
 
 import argparse
