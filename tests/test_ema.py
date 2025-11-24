@@ -28,15 +28,15 @@ def _fixed_batch(device):
     return x, y
 
 
-@pytest.mark.parametrize("decay", [0.9, 0.999])
-def test_update_math_one_step(decay):
+@pytest.mark.parametrize("ema_decay", [0.9, 0.999])
+def test_update_math_one_step(ema_decay):
     """Ensures the core of EMA: it's update math is valid."""
     dev = torch.device("cpu")
     m = Toy().to(dev)
     # make weights known
     with torch.no_grad():
         m.lin.weight.fill_(1.0)  # theta0 = 1
-    ema = EMA(m, EMAConfig(decay=decay))
+    ema = EMA(m, EMAConfig(ema_decay=ema_decay))
 
     opt = torch.optim.SGD(m.parameters(), lr=0.1)
     x, y = _fixed_batch(dev)
@@ -53,8 +53,8 @@ def test_update_math_one_step(decay):
     # Perform EMA update once
     ema.update(m)
 
-    # Expected ema = decay*theta0 + (1-decay)*theta1; theta0 was 1.0
-    expected = decay * 1.0 + (1.0 - decay) * theta1_00
+    # Expected ema = ema_decay*theta0 + (1-ema_decay)*theta1; theta0 was 1.0
+    expected = ema_decay * 1.0 + (1.0 - ema_decay) * theta1_00
     got = ema._shadow[0][0, 0].item()
     assert math.isfinite(got)
     assert abs(got - expected) < 1e-6
@@ -66,7 +66,7 @@ def test_warmup_copies_not_averaging():
     m = Toy().to(dev)
     with torch.no_grad():
         m.lin.weight.fill_(2.0)  # fill_
-    ema = EMA(m, EMAConfig(decay=0.9, warmup_steps=2))  # 2 warmup steps, hold off averaging for that long.
+    ema = EMA(m, EMAConfig(ema_decay=0.9, warmup_steps=2))  # 2 warmup steps, hold off averaging for that long.
 
     # step 1 (warmup): shadow becomes exact copy (2.0)
     ema.update(m)
@@ -86,7 +86,7 @@ def test_apply_to_swaps_and_restores():
     m = Toy().to(dev)
     with torch.no_grad():
         m.lin.weight.copy_(torch.tensor([[3.0]]))
-    ema = EMA(m, EMAConfig(decay=0.9))
+    ema = EMA(m, EMAConfig(ema_decay=0.9))
     # Manually set EMA shadow to a different value
     with torch.no_grad():
         ema._shadow[0].fill_(7.0)
@@ -100,19 +100,19 @@ def test_apply_to_swaps_and_restores():
 
 
 def test_state_dict_roundtrip(tmp_path):
-    """Tests checkpointing with it's custom dicts actually works, full roundtrip."""
+    """Tests checkpointing with its custom dicts actually works, full roundtrip."""
     dev = torch.device("cpu")
     m = Toy().to(dev)
-    ema1 = EMA(m, EMAConfig(decay=0.99))
+    ema1 = EMA(m, EMAConfig(ema_decay=0.99))
     # mutate EMA a bit
     ema1.update(m)
     sd = copy.deepcopy(ema1.state_dict())
 
     # new instance, load
-    ema2 = EMA(m, EMAConfig(decay=0.5))  # different decay; should be overwritten by load
+    ema2 = EMA(m, EMAConfig(ema_decay=0.5))  # different ema_decay; should be overwritten by load
     ema2.load_state_dict(sd)
 
-    assert ema2.decay == pytest.approx(sd["decay"])
+    assert ema2.ema_decay == pytest.approx(sd["decay"])
     assert ema2._step == sd["step"]
     for t1, t2 in zip(sd["shadow"], ema2._shadow):
         assert torch.allclose(t1, t2)
@@ -123,7 +123,7 @@ def test_cpu_shadow_cuda_model():
     """No device troubles, shadows on cpu by default."""
     device = torch.device("cuda")
     m = Toy().to(device)
-    ema = EMA(m, EMAConfig(decay=0.999, device=torch.device("cpu")))  # keep shadow on CPU
+    ema = EMA(m, EMAConfig(ema_decay=0.999, device=torch.device("cpu")))  # keep shadow on CPU
 
     # Run a couple updates; should not raise
     for _ in range(3):
@@ -142,7 +142,7 @@ def test_no_grads_and_skips_frozen_params():
     for p in m.lin.parameters():
         p.requires_grad = False
 
-    ema = EMA(m, EMAConfig(decay=0.9))
+    ema = EMA(m, EMAConfig(ema_decay=0.9))
     # If param is frozen, shadow list should be empty (or unchanged)
     assert len(ema._shadow) == 0
 
@@ -157,7 +157,7 @@ def test_buffers_not_included_by_default():
     m = Toy().to(dev)
     with torch.no_grad():
         m.scale.fill_(5.0)
-    ema = EMA(m, EMAConfig(decay=0.9, include_buffers=False))
+    ema = EMA(m, EMAConfig(ema_decay=0.9, include_buffers=False))
     # No buffer shadows tracked by default
     assert getattr(ema, "_buf_shadow", []) == []
 
@@ -168,7 +168,7 @@ def test_convergence_when_live_constant():
     m = Toy().to(dev)
     with torch.no_grad():
         m.lin.weight.fill_(4.0)
-    ema = EMA(m, EMAConfig(decay=0.9))
+    ema = EMA(m, EMAConfig(ema_decay=0.9))
     for _ in range(50):
         ema.update(m)
     # After many updates with constant theta, EMA ≈ theta

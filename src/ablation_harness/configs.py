@@ -118,7 +118,11 @@ class SchedCfg:
 @dataclass
 class EMACfg:
     enabled: bool = False
-    decay: float = 0.9999
+    decay: float = 0.999  # 0.999–0.9999 are common for vision; smaller for short runs
+    device: str = None  # keep EMA on CPU to save VRAM (optional)
+    pin_mem: bool = False  # only if device is CUDA and you want pinned mem copies
+    include_buffers: bool = False  # usually False; BN buffers are already moving avgs
+    warmup_steps: int = 0
 
 
 @dataclass
@@ -206,6 +210,9 @@ class RuntimeConfig:
     sched_name: str
     ema_enabled: bool
     ema_decay: float
+    pin_mem: bool
+    include_buffers: bool
+    warmup_steps: int
 
     task: str | None = None  # "diffusion" or None/classification
     total_steps: int = 10_000  # used for steps-based loops

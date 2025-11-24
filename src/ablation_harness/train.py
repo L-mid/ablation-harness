@@ -186,6 +186,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
 
     # Steps config
     total_steps = getattr(rt, "total_steps", 1)  # set this from adapter/resolve_config
+    print("[debug] total_steps:", total_steps)
     log_every = spec.logging.log_every_n_steps
 
     # Resume
@@ -245,7 +246,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                     # Build an EMA eval copy only once for all tasks due this step
                     model_eval = build_unet_model(rt).to(device)
                     if getattr(rt, "ema_enabled", True):
-                        ema.copy_to_to(model_eval)
+                        ema.copy_to(model_eval)
                     else:
                         model_eval.load_state_dict(model.state_dict())
 

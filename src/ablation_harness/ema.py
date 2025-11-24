@@ -10,7 +10,7 @@ from torch import nn
 
 @dataclass
 class EMAConfig:
-    decay: float = 0.999  # 0.999–0.9999 are common for vision; smaller for short runs
+    ema_decay: float = 0.999  # 0.999–0.9999 are common for vision; smaller for short runs
     device: Optional[torch.device] = None  # keep EMA on CPU to save VRAM (optional)
     pin_mem: bool = False  # only if device is CUDA and you want pinned mem copies
     include_buffers: bool = False  # usually False; BN buffers are already moving avgs
@@ -27,7 +27,7 @@ class EMA:
 
     def __init__(self, model: nn.Module, cfg: EMAConfig = EMAConfig()):
         """Initalizes using cfg from the dataclass."""
-        self.decay = float(cfg.decay)
+        self.decay = float(cfg.ema_decay)
         self.include_buffers = cfg.include_buffers
         self.warmup_steps = int(cfg.warmup_steps)
         self._step = 0
@@ -203,7 +203,7 @@ class EMA:
 
         WARNING for future checkpointing: custom loading format (uses state_dict's save format).
         """
-        self.decay = float(sd["decay"])
+        self.ema_decay = float(sd["decay"])
         self._step = int(sd["step"])
         for dst, src in zip(self._shadow, sd["shadow"]):
             dst.copy_(src)

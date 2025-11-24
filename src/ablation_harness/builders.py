@@ -1,4 +1,4 @@
-from ablation_harness.ema import EMA, EMAConfig
+from ablation_harness.ema import EMA
 
 
 class NoOpEMA:
@@ -19,9 +19,9 @@ class NoOpEMA:
 
 
 def build_ema(model, cfg):
-    if not getattr(cfg, "enable", False):
+    if not getattr(cfg, "ema_enabled", False):
+        print("[debug builders] ema noop path")
         return NoOpEMA()
     # support dict or dataclass
-    if isinstance(cfg, dict):
-        return EMA(model, EMAConfig(**cfg))
+    print("[debug builders] ema path selected")
     return EMA(model, cfg)
