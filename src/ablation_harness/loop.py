@@ -29,12 +29,13 @@ def evaluate(model, loader, criterion, dev, ema):
     """Sets model to eval and evaluates it against test split of data."""
     model.eval()
     total_loss, correct, count = 0.0, 0, 0
-    with ema.apply_to(model):
-        for xb, yb in loader:
-            xb, yb = xb.to(dev), yb.to(dev)
-            logits = model(xb)
-            loss = criterion(logits, yb)
-            total_loss += loss.item() * yb.numel()
-            correct += (logits.argmax(1) == yb).long().sum().item()
-            count += yb.numel()
+    if ema is not None:
+        ema.copy_to(model)
+    for xb, yb in loader:
+        xb, yb = xb.to(dev), yb.to(dev)
+        logits = model(xb)
+        loss = criterion(logits, yb)
+        total_loss += loss.item() * yb.numel()
+        correct += (logits.argmax(1) == yb).long().sum().item()
+        count += yb.numel()
     return {"loss": total_loss / max(count, 1), "acc": correct / max(count, 1)}

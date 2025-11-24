@@ -226,7 +226,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                 torch.nn.utils.clip_grad_norm_(model.parameters(), rt.grad_clip)
             optimizer.step()
             if getattr(rt, "ema_enabled", True):
-                ema.update()
+                ema.update(model)
 
             # --- after optimizer.step() and ema.update() ---
             # Logging
@@ -245,7 +245,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                     # Build an EMA eval copy only once for all tasks due this step
                     model_eval = build_unet_model(rt).to(device)
                     if getattr(rt, "ema_enabled", True):
-                        ema.apply_to(model_eval)
+                        ema.copy_to_to(model_eval)
                     else:
                         model_eval.load_state_dict(model.state_dict())
 
@@ -295,7 +295,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     # === FINAL EVAL AT TRAIN END ===
     model_eval = build_unet_model(rt).to(device)
     if getattr(rt, "ema_enabled", True):
-        ema.apply_to(model_eval)
+        ema.copy_to(model_eval)
     else:
         model_eval.load_state_dict(model.state_dict())
 
