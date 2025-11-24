@@ -16,12 +16,9 @@ Usage:
 
 
 Current:
-    python -m ablation_harness.plots.plot_loss \
-    docs/assets/E3/noise-sched-e3a/loss/loss.jsonl \
-    docs/assets/E3/noise-sched-e3b/loss/loss.jsonl \
-    --labels E3a E3b \
-    --out docs/assets/E3/E3_plots/E3ab_loss_overlay.png \
-    --ema 0.1
+python -m ablation_harness.plots.plot_loss \
+  docs/assets/E5/data/loss.jsonl \
+  --out docs/assets/e5/e5_plots 
 """
 
 import argparse

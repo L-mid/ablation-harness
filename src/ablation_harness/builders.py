@@ -11,10 +11,11 @@ class NoOpEMA:
     def load_state_dict(self, *_, **__):
         pass
 
-    def apply_to(self, model):  # context manager that does nothing
-        from contextlib import nullcontext
+    def copy_to(self, model): 
+        pass
 
-        return nullcontext()
+    def apply_to(self, model): 
+        pass
 
 
 def build_ema(model, cfg):

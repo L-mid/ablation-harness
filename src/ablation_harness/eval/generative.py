@@ -141,6 +141,12 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
     Returns a dict with top-level 'fid', 'kid', 'n' plus 'details' per task.
     """
 
+    # debug
+    with torch.no_grad():
+        w = next(model_ema.parameters())
+        print("[generative.py debug] eval weight mean/std:", float(w.mean()), float(w.std()))
+        
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     device = next(model_ema.parameters()).device
