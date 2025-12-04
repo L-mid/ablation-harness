@@ -10,6 +10,12 @@ DEFAULT_OUT = Path("C:/ML/runs") if os.name == "nt" else Path.home() / "ml_runs"
 
 
 @dataclass
+class LossConfig:
+    weighting: str = "constant"  # "constant" or "minsnr"
+    minsnr_gamma: float = 5.0
+
+
+@dataclass
 class TrainCfg:
     total_steps: int = 10_000
     grad_clip: float = 1.0
@@ -173,6 +179,7 @@ class StudySpec:
     logging: LoggingCfg = field(default_factory=LoggingCfg)
     train: TrainCfg = field(default_factory=TrainCfg)
     eval: EvalsCfg = field(default_factory=EvalsCfg)
+    loss: LossConfig = field(default_factory=LossConfig)
     diffusion: DiffusionCfg = field(default_factory=DiffusionCfg)
 
 

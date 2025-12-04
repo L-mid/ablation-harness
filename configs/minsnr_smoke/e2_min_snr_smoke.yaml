@@ -1,0 +1,102 @@
+# edit after ablation-harness min-snr edit
+schema: study/v1
+study_name: min_snr
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "E2-minsnr-linear-full-50k-50nfe"
+
+device: null
+deterministic: true
+clean_run: false
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 0
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  # same model as E1
+
+ema:
+  enabled: true
+  decay: 0.999
+
+diffusion:
+  enabled: true
+  beta_schedule: "linear"
+  # num_timesteps: 1000
+  # ... keep defaults as in E1
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 10
+  grad_clip: 1.0
+  amp: false
+
+loss:
+  weighting: "constant"   # or "minsnr"
+  minsnr_gamma: 5.0       # recommended default
+
+eval:
+  quick: false
+
+  grid:
+    enabled: true
+    every: 5000
+    sampler: ddim
+    nfe: 20
+    n_samples: 36
+    save_images: true
+
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+  fid_milestone:
+    enabled: true
+    every: 10000
+    run_if_kid_improved_pct: 0.0
+    sampler: ddpm
+    nfe: 50
+    n_samples: 5000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+  final:
+    enabled: false
+    at_end: true
+    sampler: ddpm
+    nfe: 50
+    n_samples: 10000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+logging:
+  enable: false
+  backends: ["tensorboard","wandb"]
+  log_every_n_steps: 100
+
+  wandb:
+    mode: online
+    project: min_snr
+    run_name: "E2-minsnr-linear-full-50k-50nfe"
+    tags: ["E2", "mins- snr", "linear", "50k", "50nfe", "min_snr"]
+    notes: "E2: Min-SNR loss (future), same setup as E1; only loss weighting will change when implemented."
+
+  tensorboard:
+    flush_secs: 10
+
+# NOTE: For now E2 is identical to E1 in behavior.
+# Once Min-SNR loss reweighting is implemented in ablation-harness, this
+# config will be changed to enable it (e.g. via a dedicated 'loss' block).

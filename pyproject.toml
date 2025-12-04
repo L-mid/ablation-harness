@@ -5,7 +5,7 @@ description = "Ablation harness + reproducibility template"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "numpy>=1.26",
+    "numpy>=1.26,<2.0",
     "omegaconf>=2.3",
     "scikit-learn>=1.4",
     "matplotlib>=3.8",
@@ -40,11 +40,6 @@ dev = [
 torch-cpu = [
     "torch>=2.3", "torchvision>=0.18", "torchaudio>=2.3"
 ]
-
-
-[tool.pytest.ini_options]
-addopts = "-q"
-testpaths = ["tests"]
 
 [tool.black]
 line-length = 200

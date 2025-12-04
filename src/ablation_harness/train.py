@@ -167,8 +167,9 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     from .checkpoint import metric_from_fid, save_best_if_better, save_last, try_resume
     from .logging.jsonl_metric_logger import MetricLogger
     from .optimizers import build_optimizer
+    from .tasks.diffusion.losses import ddpm_loss
     from .tasks.diffusion.models.unet_cifar32 import build_unet_model
-    from .tasks.diffusion.schedule import ddpm_loss, get_beta_schedule, precompute_q
+    from .tasks.diffusion.schedule import get_beta_schedule, precompute_q
 
     # ----- Build model/optimizer/EMA -----
     model = build_unet_model(rt).to(device)
@@ -220,7 +221,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
             x0 = images.to(device)
             # x0 = x0 * 2.0 - 1.0  # uncomment if your loader gives [0,1]
 
-            loss = ddpm_loss(model, x0, q)
+            loss = ddpm_loss(model=model, x0=x0, q=q, loss_cfg=getattr(spec, "loss", None))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             if rt.grad_clip > 0:
