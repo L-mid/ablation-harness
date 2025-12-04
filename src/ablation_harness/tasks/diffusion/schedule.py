@@ -74,7 +74,7 @@ def sample_timesteps(bsz: int, K: int, device):
 
 
 def q_sample(x0, t, q):
-    # x_t = sqrt(alpha_bar_t) * x0 + sqrt(1-alpha_bar_t) * eps
+    """x_t = sqrt(alpha_bar_t) * x0 + sqrt(1-alpha_bar_t) * eps"""
     eps = torch.randn_like(x0)
     sqrt_ab = q["sqrt_alpha_bar"][t].view(-1, 1, 1, 1)
     sqrt_om = q["sqrt_one_minus_alpha_bar"][t].view(-1, 1, 1, 1)
@@ -82,6 +82,7 @@ def q_sample(x0, t, q):
 
 
 def ddpm_loss(model, x0, q, timesteps=None):
+    """Vanilla simple mse ddpm loss fn, native to schedule."""
     bsz = x0.size(0)
     device = x0.device
     K = q["betas"].numel()
