@@ -40,6 +40,30 @@ def _get_git_hash() -> str | None:
         return None
 
 
+def _compute_grad_stats(model) -> Dict[str, float]:
+    """Simple global gradient stats for diagnostics."""
+
+    total_norm_sq = 0.0
+    abs_chunks = []
+
+    for p in model.parameters():
+        if p.grad is None:
+            continue
+        g = p.grad.detach()
+        total_norm_sq += float(g.norm(2).item() ** 2)
+        abs_chunks.append(g.abs().reshape(-1))
+
+    if not abs_chunks:
+        return {}
+
+    abs_all = torch.cat(abs_chunks)
+    return {
+        "train/grad_global_L2": total_norm_sq**0.5,
+        "train/grad_abs_mean": float(abs_all.mean().item()),
+        "train/grad_abs_max": float(abs_all.max().item()),
+    }
+
+
 def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Running in the trainer."""
     rt: RuntimeConfig
@@ -167,7 +191,10 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     from .checkpoint import metric_from_fid, save_best_if_better, save_last, try_resume
     from .logging.jsonl_metric_logger import MetricLogger
     from .optimizers import build_optimizer
-    from .tasks.diffusion.losses import ddpm_loss
+    from .tasks.diffusion.losses import (
+        compute_snr_from_alphas_cumprod,
+        ddpm_loss_with_info,
+    )
     from .tasks.diffusion.models.unet_cifar32 import build_unet_model
     from .tasks.diffusion.schedule import get_beta_schedule, precompute_q
 
@@ -207,6 +234,30 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     from itertools import cycle
 
     with MetricLogger(str(metrics_path), fmt="jsonl") as mlog:
+
+        # --- Optional: log Min-SNR theoretical weight curve at step 0 ---
+        loss_cfg = getattr(spec, "loss", None)
+        if getattr(loss_cfg, "weighting", "constant") == "minsnr":
+            with torch.no_grad():
+                alpha_bar = q["alpha_bar"]  # [K]
+                K = alpha_bar.shape[0]
+                t_all = torch.arange(K, device=alpha_bar.device, dtype=torch.long)
+                snr_all = compute_snr_from_alphas_cumprod(alpha_bar, t_all)
+                gamma = torch.as_tensor(
+                    getattr(loss_cfg, "minsnr_gamma", 5.0),
+                    dtype=snr_all.dtype,
+                    device=snr_all.device,
+                )
+                weight_all = torch.minimum(snr_all, gamma) / snr_all.clamp(min=1e-12)
+
+            curve_metrics = {
+                # arrays get stored as JSON lists in the jsonl logger
+                "mins_snr_curve/t": [int(x) for x in t_all.tolist()],
+                "mins_snr_curve/weight": [float(x) for x in weight_all.tolist()],
+            }
+            logger.log_metrics({**curve_metrics, "step": 0})
+            mlog.log(0, epoch=0, **curve_metrics)
+
         for batch in cycle(train_loader):
             global_step += 1
             print_global_step = 100
@@ -221,20 +272,39 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
             x0 = images.to(device)
             # x0 = x0 * 2.0 - 1.0  # uncomment if your loader gives [0,1]
 
-            loss = ddpm_loss(model=model, x0=x0, q=q, loss_cfg=getattr(spec, "loss", None))
+            log_this_step = (global_step % log_every) == 0
+
+            loss, loss_info = ddpm_loss_with_info(
+                model=model,
+                x0=x0,
+                q=q,
+                loss_cfg=getattr(spec, "loss", None),
+                log_per_t_mse=log_this_step,  # 🔹 only compute per-t MSE on logging steps
+            )
+
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
+
             if rt.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), rt.grad_clip)
+
+            # Grad stats AFTER clipping, BEFORE the step
+            grad_stats = _compute_grad_stats(model)
+
             optimizer.step()
             if getattr(rt, "ema_enabled", True):
                 ema.update(model)
 
-            # --- after optimizer.step() and ema.update() ---
-            # Logging
+            # --- Logging ---
             if (global_step % log_every) == 0:
-                logger.log_metrics({"train/loss": float(loss.detach().cpu()), "step": global_step})
-                mlog.log(global_step, epoch=0, **{"train/loss": float(loss.detach().cpu())})
+                train_metrics = {
+                    "train/loss": float(loss.detach().cpu()),
+                    **grad_stats,
+                    **loss_info,
+                }
+
+                logger.log_metrics({**train_metrics, "step": global_step})
+                mlog.log(global_step, epoch=0, **train_metrics)
 
                 # === EVAL: schedule & run (grid / kid / fid_milestone) ===
                 E = spec.eval  # EvalCfg with nested sections we added earlier

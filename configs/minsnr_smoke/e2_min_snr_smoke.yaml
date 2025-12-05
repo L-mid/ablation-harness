@@ -43,14 +43,14 @@ train:
   amp: false
 
 loss:
-  weighting: "constant"   # or "minsnr"
+  weighting: "minsnr"   # or "minsnr" or "constant"
   minsnr_gamma: 5.0       # recommended default
 
 eval:
   quick: false
 
   grid:
-    enabled: true
+    enabled: false
     every: 5000
     sampler: ddim
     nfe: 20
@@ -66,7 +66,7 @@ eval:
     nfe: 20
 
   fid_milestone:
-    enabled: true
+    enabled: false
     every: 10000
     run_if_kid_improved_pct: 0.0
     sampler: ddpm
@@ -83,12 +83,12 @@ eval:
     fid_stats: "stats/cifar10_inception_train.npz"
 
 logging:
-  enable: false
+  enable: true
   backends: ["tensorboard","wandb"]
-  log_every_n_steps: 100
+  log_every_n_steps: 10
 
   wandb:
-    mode: online
+    mode: disabled
     project: min_snr
     run_name: "E2-minsnr-linear-full-50k-50nfe"
     tags: ["E2", "mins- snr", "linear", "50k", "50nfe", "min_snr"]
@@ -96,7 +96,3 @@ logging:
 
   tensorboard:
     flush_secs: 10
-
-# NOTE: For now E2 is identical to E1 in behavior.
-# Once Min-SNR loss reweighting is implemented in ablation-harness, this
-# config will be changed to enable it (e.g. via a dedicated 'loss' block).
