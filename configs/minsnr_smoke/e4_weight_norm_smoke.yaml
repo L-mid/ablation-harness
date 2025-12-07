@@ -1,0 +1,97 @@
+schema: study/v1
+study_name: min_snr
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "e4-minsnr-linear-weightnorm-10k-50nfe"
+
+device: null
+deterministic: true
+clean_run: false
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 2
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  # same model as E1/E2
+
+ema:
+  enabled: true
+  decay: 0.999
+
+diffusion:
+  enabled: true
+  beta_schedule: "linear"
+  # num_timesteps: 1000
+  # ... keep defaults as in E1/E2
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 10
+  grad_clip: 1.0
+  amp: true
+
+loss:
+  weighting: "minsnr_norm"
+  minsnr_gamma: 5.0       # same γ=5 as E2
+
+eval:
+  quick: false
+
+  grid:
+    enabled: false
+    every: 5000          # keep same grid cadence as E2 for now
+    sampler: ddim
+    nfe: 20
+    n_samples: 36
+    save_images: true
+
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+  fid_milestone:
+    enabled: false
+    every: 2000          # <-- was 10000 in E2; now 2k,4k,6k,8k,10k
+    run_if_kid_improved_pct: 0.0
+    sampler: ddpm
+    nfe: 50
+    n_samples: 5000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+  final:
+    enabled: false
+    at_end: true
+    sampler: ddpm
+    nfe: 50
+    n_samples: 10000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+logging:
+  enable: false
+  backends: ["tensorboard","wandb"]
+  log_every_n_steps: 100
+
+  wandb:
+    mode: online
+    project: min_snr
+    run_name: "e4-minsnr-linear-weightnorm-50k-50nfe"
+    tags: ["e4", "min-snr", "linear", "weightnorm", "50k", "50nfe", "min_snr"]
+    notes: "e4: Min-SNR loss with timestep weights normalized to mean 1."
+
+  tensorboard:
+    flush_secs: 10
