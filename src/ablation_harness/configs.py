@@ -16,6 +16,14 @@ class LossConfig:
 
 
 @dataclass
+class CurvatureConfig:  # Hutchinson trace probe config
+    enabled: bool = True
+    method: str = "hutchinson"
+    probes: int = 8
+    log_prefix: str = "curvature/hutch"
+
+
+@dataclass
 class TrainCfg:
     total_steps: int = 10_000
     grad_clip: float = 1.0
@@ -180,6 +188,7 @@ class StudySpec:
     train: TrainCfg = field(default_factory=TrainCfg)
     eval: EvalsCfg = field(default_factory=EvalsCfg)
     loss: LossConfig = field(default_factory=LossConfig)
+    curvature: CurvatureConfig = field(default_factory=CurvatureConfig)
     diffusion: DiffusionCfg = field(default_factory=DiffusionCfg)
 
 

@@ -190,6 +190,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     from .builders import build_ema
     from .checkpoint import metric_from_fid, save_best_if_better, save_last, try_resume
     from .logging.jsonl_metric_logger import MetricLogger
+    from .metrics.hutchinsion_trace import estimate_hutchinson_trace
     from .optimizers import build_optimizer
     from .tasks.diffusion.losses import (
         compute_snr_from_alphas_cumprod,
@@ -258,6 +259,9 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
             logger.log_metrics({**curve_metrics, "step": 0})
             mlog.log(0, epoch=0, **curve_metrics)
 
+        loss_cfg = getattr(spec, "loss", None)
+        curvature_cfg = getattr(spec, "curvature", None)
+
         for batch in cycle(train_loader):
             global_step += 1
             print_global_step = 100
@@ -291,6 +295,24 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
             # Grad stats AFTER clipping, BEFORE the step
             grad_stats = _compute_grad_stats(model)
 
+            # --- Hutchinson curvature probe (optional) ---
+            curvature_metrics = {}
+            if curvature_cfg is not None and getattr(curvature_cfg, "enabled", False):
+                if (global_step % log_every) == 0:
+                    hutch_stats = estimate_hutchinson_trace(
+                        model=model,
+                        x0=x0,
+                        q=q,
+                        loss_cfg=loss_cfg,
+                        curvature_cfg=curvature_cfg,
+                        device=device,
+                    )
+                    prefix = getattr(curvature_cfg, "log_prefix", "curvature/hutch")
+                    curvature_metrics = {
+                        f"{prefix}_trace_mean": float(hutch_stats["mean"]),
+                        f"{prefix}_trace_std": float(hutch_stats["std"]),
+                    }
+
             optimizer.step()
             if getattr(rt, "ema_enabled", True):
                 ema.update(model)
@@ -301,6 +323,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                     "train/loss": float(loss.detach().cpu()),
                     **grad_stats,
                     **loss_info,
+                    **curvature_metrics,
                 }
 
                 logger.log_metrics({**train_metrics, "step": global_step})

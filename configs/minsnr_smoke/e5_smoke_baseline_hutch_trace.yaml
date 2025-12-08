@@ -1,0 +1,100 @@
+schema: study/v1
+study_name: min_snr
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "e5-baseline-linear-hutch-trace-10k-50nfe"
+
+device: null
+deterministic: true
+clean_run: false
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 0
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  # same model as E1/E2
+
+ema:
+  enabled: true
+  decay: 0.999
+
+diffusion:
+  enabled: true
+  beta_schedule: "linear"
+  # num_timesteps: 1000
+  # ... keep defaults as in E1/E2
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 10
+  grad_clip: 1.0
+  amp: false
+
+loss:
+  # Vanilla ε-MSE DDPM loss (no Min-SNR reweighting)
+  weighting: "constant"
+
+curvature:
+  # New: Hutchinson trace probe config for E5
+  enabled: true
+  method: "hutchinson"
+  probes: 16            # number of Rademacher vectors per measurement
+  log_prefix: "curvature/hutch"  # e.g. logs: curvature/hutch_trace_mean, curvature/hutch_trace_std
+
+eval:
+  quick: false
+
+  grid:
+    enabled: false
+    every: 5000
+    sampler: ddim
+    nfe: 20
+    n_samples: 36
+    save_images: true
+
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+  fid_milestone:
+    enabled: true
+    every: 2000          # 2k,4k,6k,8k,10k
+    run_if_kid_improved_pct: 0.0
+    sampler: ddpm
+    nfe: 50
+    n_samples: 5000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+  final:
+    enabled: false
+    at_end: true
+    sampler: ddpm
+    nfe: 50
+    n_samples: 10000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+logging:
+  enable: true
+  backends: []
+  log_every_n_steps: 1
+
+  wandb:
+    mode: disabled
+
+  tensorboard:
+    flush_secs: 10
