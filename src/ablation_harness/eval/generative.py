@@ -34,7 +34,7 @@ def _inception_activations(x: torch.Tensor, device: torch.device) -> np.ndarray:
     net = _get_inception(device)
     # Resize from e.g. 32x32 → 299x299
     x = F.interpolate(x, size=(299, 299), mode="bilinear", align_corners=False)
-    with torch.inference_mode():
+    with torch.no_grad():
         feats = net(x)
     return feats.detach().cpu().numpy()
 
@@ -133,7 +133,7 @@ def _sample(model, shape, q, sampler, nfe, seed, device):
     return smp.sample(model, shape, seed=seed)
 
 
-@torch.inference_mode()
+@torch.no_grad()
 def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None):  # noqa C901
     """
     Run diffusion eval(s). If `task` is None, run all enabled tasks in eval_cfg.
