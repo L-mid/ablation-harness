@@ -195,8 +195,8 @@ class UNetCifar32(nn.Module):
         return h
 
 
-def build_unet_model(cfg: str, **kw):
-    name = cfg.model_name
+def build_unet_model(cfg: str, **kw):  # spec cfg
+    name = cfg.model.name
 
     if name == "unet_cifar32":
         return UNetCifar32(
