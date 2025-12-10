@@ -111,10 +111,10 @@ def test_fid_cpu_vs_cuda_features_near_zero():
 FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")  # your .npz
 
 
-# @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.skipif(not Path(FID_STATS_PATH).exists(), reason="FID stats file not found")
 def test_fid_cifar_train_vs_stats_not_insane():
-    device = torch.device("gpu")
+    device = torch.device("cuda")
 
     # 1) Get real CIFAR-10 images in [-1,1]
     tr, _ = build_cifar10(subset=5000)  # or None and just slice
