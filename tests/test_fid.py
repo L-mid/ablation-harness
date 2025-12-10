@@ -1,7 +1,10 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
 
+from ablation_harness.data import build_cifar10  # wherever build_cifar10 lives
 from ablation_harness.eval.generative import _fid_from_stats, _inception_activations
 
 
@@ -102,4 +105,37 @@ def test_fid_cpu_vs_cuda_features_near_zero():
 
     # Because feats_cpu ~= feats_cuda elementwise, mu/sigma are also very close
     # and FID should be near 0. Small numerical noise is fine.
-    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"
+    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"  # passes on negative values
+
+
+FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")  # your .npz
+
+
+# @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not Path(FID_STATS_PATH).exists(), reason="FID stats file not found")
+def test_fid_cifar_train_vs_stats_not_insane():
+    device = torch.device("cpu")
+
+    # 1) Get real CIFAR-10 images in [-1,1]
+    tr, _ = build_cifar10(subset=5000)  # or None and just slice
+    n = 2048
+    imgs_neg1_1 = torch.stack([tr[i][0] for i in range(n)], dim=0).to(device)  # [-1,1]
+
+    # 2) Map to [0,1] exactly like the FID path for generator outputs
+    imgs_01 = (imgs_neg1_1.clamp(-1, 1) + 1.0) / 2.0  # [-1,1] -> [0,1]
+
+    # 3) Inception features
+    feats = _inception_activations(imgs_01, device)
+    mu_real = feats.mean(axis=0)
+    sigma_real = np.cov(feats, rowvar=False)
+
+    # 4) Load reference stats
+    data = np.load(FID_STATS_PATH)
+    mu_ref = data["mu"]
+    sigma_ref = data["sigma"]
+
+    fid = _fid_from_stats(mu_real, sigma_real, mu_ref, sigma_ref)
+    print("FID(real CIFAR via current pipeline, stats) =", fid)
+
+    # If stats were computed with this same pipeline, this should be small.
+    assert fid < 20.0, f"FID(CIFAR vs stats) too large: {fid}"
