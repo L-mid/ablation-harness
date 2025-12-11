@@ -195,18 +195,20 @@ class UNetCifar32(nn.Module):
         return h
 
 
-def build_unet_model(cfg: str, **kw):  # spec cfg
-    name = cfg.model.name
+def build_unet_model(cfg, **kw):  # cfg is your full experiment cfg
+    model_cfg = cfg.model          
+    name = model_cfg.name
 
     if name == "unet_cifar32":
         return UNetCifar32(
-            in_channels=kw.get("in_channels", 3),
-            out_channels=kw.get("out_channels", 3),
-            base_channels=kw.get("base_channels", 32),
-            channel_mults=tuple(kw.get("channel_mults", [1, 2, 2, 2])),
-            num_res_blocks=kw.get("num_res_blocks", 2),
-            dropout=kw.get("dropout", 0.1),
-            time_hidden=kw.get("time_embedding", {}).get("hidden_dim", 512),
-            gn_groups=kw.get("gn_groups", 32),
+            in_channels=kw.get("in_channels", model_cfg.in_channels),
+            out_channels=kw.get("out_channels", model_cfg.out_channels),
+            base_channels=kw.get("base_channels", model_cfg.base_channels),
+            channel_mults=tuple(kw.get("channel_mults", model_cfg.channel_mults)),
+            num_res_blocks=kw.get("num_res_blocks", model_cfg.num_res_blocks),
+            dropout=kw.get("dropout", model_cfg.dropout),
+            time_hidden=kw.get("time_embedding", model_cfg.time_embedding),
+            gn_groups=kw.get("gn_groups", model_cfg.gn_groups),
         )
-    raise KeyError(cfg)
+
+    raise KeyError(name)

@@ -1,0 +1,104 @@
+schema: study/v1
+study_name: min_snr
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "e7c-baseline-linear-hutch-10k-50nfe-bc64"
+
+device: null
+deterministic: true
+clean_run: false
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 0
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  base_channels: 64        # <--- capacity bump
+  # channel_mults, num_res_blocks, etc. remain defaults.
+  # This should give you roughly 4x params vs base_channels=32.
+
+ema:
+  enabled: true
+  decay: 0.999
+
+diffusion:
+  enabled: true
+  beta_schedule: "linear"
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 2
+  grad_clip: 1.0
+  amp: true
+
+loss:
+  weighting: "constant"
+
+curvature:
+  enabled: true
+  method: "hutchinson"
+  probes: 16
+  log_prefix: "curvature/hutch"
+
+eval:
+  quick: false
+
+  grid:
+    enabled: true
+    every: 5000
+    sampler: ddim
+    nfe: 20
+    n_samples: 36
+    save_images: true
+
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+  fid_milestone:
+    enabled: true
+    every: 2000
+    run_if_kid_improved_pct: 0.0
+    sampler: ddpm
+    nfe: 50
+    n_samples: 5000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+  final:
+    enabled: false
+    at_end: true
+    sampler: ddpm
+    nfe: 50
+    n_samples: 10000
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+logging:
+  enable: false
+  backends: ["tensorboard", "wandb"]
+  log_every_n_steps: 100
+
+  wandb:
+    mode: oisabled
+    project: min_snr
+    run_name: "e7c-baseline-linear-hutch-10k-50nfe-bc64"
+    tags:
+      ["E7", "E7c", "baseline", "vanilla", "hutchinson-trace",
+       "linear", "10k", "50nfe", "bc64", "min_snr"]
+    notes: "E7c: vanilla ε-MSE baseline with Hutchinson trace, base_channels=64, 10k steps."
+
+  tensorboard:
+    flush_secs: 10
