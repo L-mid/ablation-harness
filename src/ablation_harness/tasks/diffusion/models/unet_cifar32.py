@@ -196,7 +196,7 @@ class UNetCifar32(nn.Module):
 
 
 def build_unet_model(cfg, **kw):  # cfg is your full experiment cfg
-    model_cfg = cfg.model          
+    model_cfg = cfg.model
     name = model_cfg.name
 
     if name == "unet_cifar32":
