@@ -3,10 +3,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import DataLoader, Subset
 
 from ablation_harness.data import build_cifar10  # wherever build_cifar10 lives
 from ablation_harness.eval.generative import _fid_from_stats, _inception_activations
-from torch.utils.data import DataLoader, Subset
 
 
 def _make_fake_generator_images(batch_size: int = 16) -> torch.Tensor:
@@ -106,10 +106,10 @@ def test_fid_cpu_vs_cuda_features_near_zero():
 
     # Because feats_cpu ~= feats_cuda elementwise, mu/sigma are also very close
     # and FID should be near 0. Small numerical noise is fine.
-    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"  
+    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"
 
 
-FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")  
+FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -129,10 +129,10 @@ def test_fid_cifar_train_vs_stats_not_insane():
     )
     feats = []
     torch.cuda.empty_cache()  # optional, helps after prior GPU tests
-    
+
     for xb, _ in dl:
-        xb = xb.to(device, non_blocking=True)          # [-1,1]
-        xb = (xb.clamp(-1, 1) + 1.0) / 2.0             # -> [0,1]
+        xb = xb.to(device, non_blocking=True)  # [-1,1]
+        xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
         feats.append(_inception_activations(xb, device, batch_size=64).cpu())
 
     feats = torch.cat(feats, dim=0)  # CPU tensor now
