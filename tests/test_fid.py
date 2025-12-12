@@ -6,6 +6,7 @@ import torch
 
 from ablation_harness.data import build_cifar10  # wherever build_cifar10 lives
 from ablation_harness.eval.generative import _fid_from_stats, _inception_activations
+from torch.utils.data import DataLoader, Subset
 
 
 def _make_fake_generator_images(batch_size: int = 16) -> torch.Tensor:
@@ -105,10 +106,10 @@ def test_fid_cpu_vs_cuda_features_near_zero():
 
     # Because feats_cpu ~= feats_cuda elementwise, mu/sigma are also very close
     # and FID should be near 0. Small numerical noise is fine.
-    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"  # passes on negative values
+    assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"  
 
 
-FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")  # your .npz
+FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")  
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
@@ -119,13 +120,22 @@ def test_fid_cifar_train_vs_stats_not_insane():
     # 1) Get real CIFAR-10 images in [-1,1]
     tr, _ = build_cifar10(subset=5000)  # or None and just slice
     n = 2048
-    imgs_neg1_1 = torch.stack([tr[i][0] for i in range(n)], dim=0).to(device)  # [-1,1]
+    dl = DataLoader(
+        Subset(tr, range(n)),
+        batch_size=64,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True,
+    )
+    feats = []
+    torch.cuda.empty_cache()  # optional, helps after prior GPU tests
+    
+    for xb, _ in dl:
+        xb = xb.to(device, non_blocking=True)          # [-1,1]
+        xb = (xb.clamp(-1, 1) + 1.0) / 2.0             # -> [0,1]
+        feats.append(_inception_activations(xb, device, batch_size=64).cpu())
 
-    # 2) Map to [0,1] exactly like the FID path for generator outputs
-    imgs_01 = (imgs_neg1_1.clamp(-1, 1) + 1.0) / 2.0  # [-1,1] -> [0,1]
-
-    # 3) Inception features
-    feats = _inception_activations(imgs_01, device)
+    feats = torch.cat(feats, dim=0)  # CPU tensor now
     mu_real = feats.mean(axis=0)
     sigma_real = np.cov(feats, rowvar=False)
 
@@ -138,4 +148,4 @@ def test_fid_cifar_train_vs_stats_not_insane():
     print("FID(real CIFAR via current pipeline, stats) =", fid)
 
     # If stats were computed with this same pipeline, this should be small.
-    assert fid < 20.0, f"FID(CIFAR vs stats) too large: {fid}"
+    assert fid < 10.0, f"FID(CIFAR vs stats) too large: {fid}"

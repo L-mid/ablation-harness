@@ -117,7 +117,7 @@ def _fid_for_generated(
         feats_list.append(feats)
         remaining -= b
         g_seed += 1
-
+ 
     feats_all = np.concatenate(feats_list, axis=0)
     mu_gen = np.mean(feats_all, axis=0)
     sigma_gen = np.cov(feats_all, rowvar=False)

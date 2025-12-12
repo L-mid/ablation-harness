@@ -36,7 +36,7 @@ def get_betas_cosine_match_linear(K: int, s=0.008, device="cpu"):
     betas = betas_cos * scale
     return betas.clamp(1e-8, 0.999)
 
-
+ 
 def get_beta_schedule(kind: str, K: int, device="cpu"):
     if kind == "linear":
         return get_betas_linear(K, device=device)
