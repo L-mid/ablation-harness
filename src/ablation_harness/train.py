@@ -393,7 +393,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
         ema.copy_to(model_eval)
     else:
         model_eval.load_state_dict(model.state_dict())
- 
+
     # --- LOG: final evaluation configuration ---
     E = spec.eval
     FE = getattr(E, "final", None)
