@@ -24,40 +24,83 @@ def _get_inception(device: torch.device):
         net.eval()
         _INCEPTION_CACHE = net
     return _INCEPTION_CACHE.to(device)
+ 
 
-
-def _inception_activations(x: torch.Tensor, device: torch.device) -> np.ndarray:
+def _inception_activations(
+    x: torch.Tensor,
+    device: torch.device,
+    batch_size: int | None = None,
+) -> np.ndarray:
     """
     x: [B, 3, H, W] in [0,1]
     Returns numpy array [B, D] of features.
+    batch_size: chunk size for running Inception to control memory.
     """
-    net = _get_inception(device)
-    # Resize from e.g. 32x32 → 299x299
-    x = F.interpolate(x, size=(299, 299), mode="bilinear", align_corners=False)
-    with torch.no_grad():
-        feats = net(x)
-    return feats.detach().cpu().numpy()
+    net = _get_inception(device)  # should be cached + .eval() inside
+    B = int(x.shape[0])
+
+    if batch_size is None:
+        # conservative defaults; tweak if you want
+        batch_size = 64 if device.type == "cuda" else 16
+    batch_size = max(1, min(int(batch_size), B))
+
+    feats_cpu = []
+    with torch.inference_mode():
+        for i in range(0, B, batch_size):
+            xb = x[i : i + batch_size]
+
+            # Move first, then resize on-device (avoids huge CPU temp + big H2D copies)
+            xb = xb.to(device, non_blocking=True).float()
+
+            xb = F.interpolate(xb, size=(299, 299), mode="bilinear", align_corners=False)
+
+            fb = net(xb)  # make sure this returns the *FID features* (e.g. pooled 2048-d)
+            fb = fb.flatten(1)  # safe if fb is [N, D, 1, 1] or already [N, D]
+
+            feats_cpu.append(fb.cpu())
+
+    feats = torch.cat(feats_cpu, dim=0)
+    return feats.numpy()
 
 
-def _sqrtm_psd(mat: np.ndarray) -> np.ndarray:
-    """Matrix square root for (almost) PSD matrices via eigen-decomposition."""
-    vals, vecs = np.linalg.eigh(mat)
-    vals = np.clip(vals, 0.0, None)
-    return (vecs * np.sqrt(vals)) @ vecs.T
+def _trace_sqrt_product_psd(sigma_a: np.ndarray, sigma_b: np.ndarray, eps: float = 1e-6) -> float:
+    """Compute Tr( sqrt(sigma_a^{1/2} sigma_b sigma_a^{1/2}) ) stably."""
+    sigma_a = np.asarray(sigma_a, dtype=np.float64)
+    sigma_b = np.asarray(sigma_b, dtype=np.float64)
+    sigma_a = (sigma_a + sigma_a.T) / 2.0
+    sigma_b = (sigma_b + sigma_b.T) / 2.0
+
+    eye = np.eye(sigma_a.shape[0], dtype=np.float64)
+    sigma_a = sigma_a + eps * eye
+    sigma_b = sigma_b + eps * eye
+
+    wa, va = np.linalg.eigh(sigma_a)
+    wa = np.clip(wa, 0.0, None)
+    sqrt_a = (va * np.sqrt(wa)) @ va.T
+
+    A = sqrt_a @ sigma_b @ sqrt_a
+    A = (A + A.T) / 2.0
+    wA = np.linalg.eigvalsh(A)
+    wA = np.clip(wA, 0.0, None)
+
+    return float(np.sum(np.sqrt(wA)))
 
 
 def _fid_from_stats(mu_gen: np.ndarray, sigma_gen: np.ndarray, mu_ref: np.ndarray, sigma_ref: np.ndarray) -> float:
-    """Standard Fréchet distance between two Gaussians."""
-    mu_gen = np.atleast_1d(mu_gen)
-    mu_ref = np.atleast_1d(mu_ref)
-    sigma_gen = np.atleast_2d(sigma_gen)
-    sigma_ref = np.atleast_2d(sigma_ref)
+    mu_gen = np.atleast_1d(mu_gen).astype(np.float64)
+    mu_ref = np.atleast_1d(mu_ref).astype(np.float64)
+    sigma_gen = np.atleast_2d(sigma_gen).astype(np.float64)
+    sigma_ref = np.atleast_2d(sigma_ref).astype(np.float64)
 
     diff = mu_gen - mu_ref
-    cov_prod = sigma_gen.dot(sigma_ref)
-    covmean = _sqrtm_psd(cov_prod)
-    fid = diff.dot(diff) + np.trace(sigma_gen) + np.trace(sigma_ref) - 2.0 * np.trace(covmean)
-    return float(np.real(fid))
+    tr_sqrt = _trace_sqrt_product_psd(sigma_gen, sigma_ref)
+
+    fid = float(diff.dot(diff) + np.trace(sigma_gen) + np.trace(sigma_ref) - 2.0 * tr_sqrt)
+
+    # only clamp microscopic negative drift
+    if fid < 0.0 and fid > -1e-6:
+        fid = 0.0
+    return fid
 
 
 def _fid_for_generated(
@@ -118,7 +161,7 @@ def _fid_for_generated(
         remaining -= b
         g_seed += 1
 
-    feats_all = np.concatenate(feats_list, axis=0)
+    feats_all = np.concatenate(feats_list, axis=0).astype(np.float64)
     mu_gen = np.mean(feats_all, axis=0)
     sigma_gen = np.cov(feats_all, rowvar=False)
 

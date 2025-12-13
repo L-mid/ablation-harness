@@ -9,6 +9,42 @@ from ablation_harness.data import build_cifar10  # wherever build_cifar10 lives
 from ablation_harness.eval.generative import _fid_from_stats, _inception_activations
 
 
+def _fid_from_stats_reference(mu_gen, sigma_gen, mu_ref, sigma_ref, eps: float = 1e-6) -> float:
+    """
+    This fid from stats is a test of the math itself local to here. 
+    Compared to with repo implementation.
+    """
+    mu_gen = np.atleast_1d(mu_gen).astype(np.float64)
+    mu_ref = np.atleast_1d(mu_ref).astype(np.float64)
+    sigma_gen = np.atleast_2d(sigma_gen).astype(np.float64)
+    sigma_ref = np.atleast_2d(sigma_ref).astype(np.float64)
+
+    sigma_gen = (sigma_gen + sigma_gen.T) / 2.0
+    sigma_ref = (sigma_ref + sigma_ref.T) / 2.0
+
+    eye = np.eye(sigma_gen.shape[0], dtype=np.float64)
+    sigma_gen = sigma_gen + eps * eye
+    sigma_ref = sigma_ref + eps * eye
+
+    diff = mu_gen - mu_ref
+
+    w, v = np.linalg.eigh(sigma_gen)
+    w = np.clip(w, 0.0, None)
+    sqrt_g = (v * np.sqrt(w)) @ v.T
+
+    A = sqrt_g @ sigma_ref @ sqrt_g
+    A = (A + A.T) / 2.0
+    wA = np.linalg.eigvalsh(A)
+    wA = np.clip(wA, 0.0, None)
+    tr_covmean = float(np.sum(np.sqrt(wA)))
+
+    fid = float(diff.dot(diff) + np.trace(sigma_gen) + np.trace(sigma_ref) - 2.0 * tr_covmean)
+    if fid < 0.0 and fid > -1e-6:
+        fid = 0.0
+    return fid
+
+
+
 def _make_fake_generator_images(batch_size: int = 16) -> torch.Tensor:
     """
     Make a fake batch of generator outputs in [-1, 1], then map to [0, 1]
@@ -129,7 +165,7 @@ def test_fid_cifar_train_vs_stats_not_insane():
     )
     feats = []
     torch.cuda.empty_cache()  # optional, helps after prior GPU tests
-
+ 
     for xb, _ in dl:
         xb = xb.to(device, non_blocking=True)  # [-1,1]
         xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
@@ -147,5 +183,35 @@ def test_fid_cifar_train_vs_stats_not_insane():
     fid = _fid_from_stats(mu_real, sigma_real, mu_ref, sigma_ref)
     print("FID(real CIFAR via current pipeline, stats) =", fid)
 
+    # no negative fid.
+    assert fid >= -1e-3, f"FID should be nonnegative (numerical tol), got {fid}"
     # If stats were computed with this same pipeline, this should be small.
     assert fid < 10.0, f"FID(CIFAR vs stats) too large: {fid}"
+
+
+# test these on cuda later
+
+def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
+    rng = np.random.default_rng(0)
+    d = 64
+
+    vals1 = np.linspace(0.5, 5.0, d)
+    vals2 = np.linspace(1.0, 3.0, d)[::-1]
+
+    Q, _ = np.linalg.qr(rng.standard_normal((d, d)))
+    sigma1 = np.diag(vals1)
+    sigma2 = Q @ np.diag(vals2) @ Q.T
+
+    mu1 = np.zeros(d, dtype=np.float64)
+    mu2 = np.zeros(d, dtype=np.float64)
+
+    fid = _fid_from_stats(mu1, sigma1, mu2, sigma2)
+    fid_ref = _fid_from_stats_reference(mu1, sigma1, mu2, sigma2)
+
+    assert np.isfinite(fid)
+    assert fid >= -1e-3
+    assert abs(fid - fid_ref) < 1e-6, f"_fid_from_stats drifted from reference: {fid} vs {fid_ref}"
+
+
+
+
