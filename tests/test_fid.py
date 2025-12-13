@@ -169,7 +169,7 @@ def test_fid_cifar_train_vs_stats_not_insane():
     for xb, _ in dl:
         xb = xb.to(device, non_blocking=True)  # [-1,1]
         xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
-        feats.append(_inception_activations(xb, device, batch_size=64).cpu())
+        feats.append(_inception_activations(xb, device, batch_size=64))
 
     feats = torch.cat(feats, dim=0)  # CPU tensor now
     mu_real = feats.mean(axis=0)
@@ -188,8 +188,6 @@ def test_fid_cifar_train_vs_stats_not_insane():
     # If stats were computed with this same pipeline, this should be small.
     assert fid < 10.0, f"FID(CIFAR vs stats) too large: {fid}"
 
-
-# test these on cuda later
 
 def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
     rng = np.random.default_rng(0)
