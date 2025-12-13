@@ -24,7 +24,7 @@ def _get_inception(device: torch.device):
         net.eval()
         _INCEPTION_CACHE = net
     return _INCEPTION_CACHE.to(device)
- 
+
 
 def _inception_activations(
     x: torch.Tensor,
@@ -63,41 +63,46 @@ def _inception_activations(
     return feats.numpy()
 
 
-def _trace_sqrt_product_psd(sigma_a: np.ndarray, sigma_b: np.ndarray, eps: float = 1e-6) -> float:
-    """Compute Tr( sqrt(sigma_a^{1/2} sigma_b sigma_a^{1/2}) ) stably."""
-    sigma_a = np.asarray(sigma_a, dtype=np.float64)
-    sigma_b = np.asarray(sigma_b, dtype=np.float64)
-    sigma_a = (sigma_a + sigma_a.T) / 2.0
-    sigma_b = (sigma_b + sigma_b.T) / 2.0
+def _make_psd(sigma: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    sigma = np.asarray(sigma, dtype=np.float64)
+    sigma = 0.5 * (sigma + sigma.T)
 
-    eye = np.eye(sigma_a.shape[0], dtype=np.float64)
-    sigma_a = sigma_a + eps * eye
-    sigma_b = sigma_b + eps * eye
+    # Only add jitter if needed
+    w = np.linalg.eigvalsh(sigma)
+    min_w = float(w.min())
+    if min_w < 0.0:
+        sigma = sigma + (-min_w + eps) * np.eye(sigma.shape[0], dtype=np.float64)
+    return sigma
 
+
+def _trace_sqrt_product_psd(sigma_a: np.ndarray, sigma_b: np.ndarray) -> float:
+    # assumes inputs are already symmetric/PSD-stabilized
     wa, va = np.linalg.eigh(sigma_a)
     wa = np.clip(wa, 0.0, None)
-    sqrt_a = (va * np.sqrt(wa)) @ va.T
 
-    A = sqrt_a @ sigma_b @ sqrt_a
-    A = (A + A.T) / 2.0
+    # work in eigenbasis (avoids forming sqrt_a explicitly)
+    M = va.T @ sigma_b @ va
+    s = np.sqrt(wa)
+    A = (s[:, None] * M) * s[None, :]
+    A = 0.5 * (A + A.T)
+
     wA = np.linalg.eigvalsh(A)
     wA = np.clip(wA, 0.0, None)
-
     return float(np.sum(np.sqrt(wA)))
 
 
-def _fid_from_stats(mu_gen: np.ndarray, sigma_gen: np.ndarray, mu_ref: np.ndarray, sigma_ref: np.ndarray) -> float:
+def _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref) -> float:
     mu_gen = np.atleast_1d(mu_gen).astype(np.float64)
     mu_ref = np.atleast_1d(mu_ref).astype(np.float64)
-    sigma_gen = np.atleast_2d(sigma_gen).astype(np.float64)
-    sigma_ref = np.atleast_2d(sigma_ref).astype(np.float64)
+
+    sigma_gen = _make_psd(np.atleast_2d(sigma_gen))
+    sigma_ref = _make_psd(np.atleast_2d(sigma_ref))
 
     diff = mu_gen - mu_ref
     tr_sqrt = _trace_sqrt_product_psd(sigma_gen, sigma_ref)
 
     fid = float(diff.dot(diff) + np.trace(sigma_gen) + np.trace(sigma_ref) - 2.0 * tr_sqrt)
 
-    # only clamp microscopic negative drift
     if fid < 0.0 and fid > -1e-6:
         fid = 0.0
     return fid
