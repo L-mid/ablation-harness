@@ -2,7 +2,7 @@
 Do this on cuda.
 
 Usage:
-    python -m ablation_harness.tools.make_cifar10_fid_stats \
+    python -m ablation_harness.tools.fid_stats.make_cifar10_fid_stats \
     --train --device cuda \
     --out stats/cifar10_inception_train.npz
 

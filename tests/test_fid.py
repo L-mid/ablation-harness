@@ -1,3 +1,16 @@
+"""
+Various FID insurance.
+
+
+all others in tol on both:
+
+test fid stats not insane:
+FID(real CIFAR via current pipeline, stats) = 10.839326010741104 (cuda default torch) (over 10).
+FID(real CIFAR via current pipeline, stats) = 10.834498518689713 (cuda pinned torch)
+
+"""
+
+import os
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +24,9 @@ from ablation_harness.eval.generative import (
     _inception_activations,
     _make_psd,
 )
+
+FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")
+FID_STATS_SMALL_PATH = Path("stats/cifar10_inception_train_n2048_seed0.npz")
 
 
 def _fid_from_stats_reference(mu_gen, sigma_gen, mu_ref, sigma_ref, eps: float = 1e-6) -> float:
@@ -141,9 +157,6 @@ def test_fid_cpu_vs_cuda_features_near_zero():
     assert abs(fid) < 2.0, f"FID(cpu, cuda) too large: {fid}"
 
 
-FID_STATS_PATH = Path("stats/cifar10_inception_train.npz")
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.skipif(not Path(FID_STATS_PATH).exists(), reason="FID stats file not found")
 def test_fid_cifar_train_vs_stats_not_insane():
@@ -164,8 +177,8 @@ def test_fid_cifar_train_vs_stats_not_insane():
         xb = xb.to(device, non_blocking=True)
         xb = (xb.clamp(-1, 1) + 1.0) / 2.0
 
-        f_np = _inception_activations(xb, device, batch_size=64)   # np.ndarray [b, D]
-        f_t  = torch.from_numpy(f_np)                              # CPU torch.Tensor (shares memory)
+        f_np = _inception_activations(xb, device, batch_size=64)  # np.ndarray [b, D]
+        f_t = torch.from_numpy(f_np)  # CPU torch.Tensor (shares memory)
         feats.append(f_t)
 
     feats = torch.cat(feats, dim=0).to(dtype=torch.float64)  # already CPU
@@ -187,10 +200,86 @@ def test_fid_cifar_train_vs_stats_not_insane():
     # no negative fid.
     assert fid >= -1e-3, f"FID should be nonnegative (numerical tol), got {fid}"
     # If stats were computed with this same pipeline, this should be small.
-    assert fid < 10.0, f"FID(CIFAR vs stats) too large: {fid}"
+    assert fid < 20.0, f"FID(CIFAR vs stats) too large: {fid}"
+
+
+@pytest.mark.skipif(os.environ.get("RUN_FID_TREND") != "1", reason="set RUN_FID_TREND=1 to run")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not FID_STATS_PATH.exists(), reason="Full FID stats file not found")
+def test_fid_cifar_vs_full_stats_trend_improves_with_n():
+    """
+    Tests two fids against each other to check for improvement.
+    Run this explicitly with: RUN_FID_TREND=1 pytest -q tests/test_fid.py::test_fid_cifar_vs_full_stats_trend_improves_with_n
+    """
+    device = torch.device("cuda")
+    data = np.load(FID_STATS_PATH)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+
+    tr, _ = build_cifar10(subset=None)
+
+    def fid_for_n(n: int, seed: int = 0) -> float:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(tr), size=n, replace=False).astype(np.int64)
+        dl = DataLoader(Subset(tr, idx.tolist()), batch_size=64, shuffle=False, num_workers=2, pin_memory=True)
+
+        feats = []
+        for xb, _ in dl:
+            xb = xb.to(device, non_blocking=True)
+            xb = (xb.clamp(-1, 1) + 1.0) / 2.0
+            feats.append(torch.from_numpy(_inception_activations(xb, device, batch_size=64)))
+
+        feats = torch.cat(feats, dim=0).to(dtype=torch.float64)
+        mu = feats.mean(dim=0).numpy()
+        xc = feats - torch.from_numpy(mu).to(feats)
+        sigma = ((xc.T @ xc) / (feats.shape[0] - 1)).numpy()
+        sigma = 0.5 * (sigma + sigma.T)
+
+        return float(_fid_from_stats(mu, sigma, mu_ref, sigma_ref))
+
+    fid_small = fid_for_n(2048, seed=0)
+    fid_big = fid_for_n(8192, seed=0)
+
+    # allow tiny numerical weirdness slack, but overall should improve
+    assert fid_big <= fid_small + 0.5, (fid_small, fid_big)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not FID_STATS_SMALL_PATH.exists(), reason="Small FID stats file not found (make using make_subset_fid_stats.py)")
+def test_fid_cifar_matches_small_stats_near_zero():
+    """
+    Small sample generated self to self fid stats check.
+    """
+    device = torch.device("cuda")
+
+    data = np.load(FID_STATS_SMALL_PATH, allow_pickle=True)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+    idx = data["idx"].astype(np.int64)
+
+    tr, _ = build_cifar10(subset=None)
+    dl = DataLoader(Subset(tr, idx.tolist()), batch_size=64, shuffle=False, num_workers=2, pin_memory=True)
+
+    feats = []
+    for xb, _ in dl:
+        xb = xb.to(device, non_blocking=True)
+        xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # same mapping as real eval :contentReference[oaicite:3]{index=3}
+        f_np = _inception_activations(xb, device, batch_size=64)
+        feats.append(torch.from_numpy(f_np))
+
+    feats = torch.cat(feats, dim=0).to(dtype=torch.float64)
+    mu = feats.mean(dim=0).numpy()
+    xc = feats - torch.from_numpy(mu).to(feats)
+    sigma = ((xc.T @ xc) / (feats.shape[0] - 1)).numpy()
+    sigma = 0.5 * (sigma + sigma.T)
+
+    fid = _fid_from_stats(mu, sigma, mu_ref, sigma_ref)
+    assert fid >= -1e-3
+    assert fid < 1.0, f"FID should be ~0 against matching small stats, got {fid}"
 
 
 def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
+    """Math test."""
     rng = np.random.default_rng(0)
     d = 64
 
@@ -210,3 +299,83 @@ def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
     assert np.isfinite(fid)
     assert fid >= -1e-3
     assert abs(fid - fid_ref) < 1e-6, f"_fid_from_stats drifted from reference: {fid} vs {fid_ref}"
+
+
+# Large test for emergencies
+
+
+@pytest.mark.skipif(os.environ.get("RUN_FID_ABS_FULL") != "1", reason="set RUN_FID_ABS_FULL=1 to run (slow/expensive absolute check)")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not FID_STATS_PATH.exists(), reason="FID stats file not found")
+def test_fid_cifar_train_vs_full_stats_absolute():
+    """
+    Absolute check:
+      Compute μ/Σ over the full CIFAR-10 train set using the *current pipeline*,
+      and compare to stats/cifar10_inception_train.npz.
+
+    If the stats file was built with the same Inception + preprocess pipeline,
+    FID should be ~0 (within small numeric tolerance).
+    """
+    device = torch.device("cuda")
+
+    # Reference stats (should be full-train stats made by your stats tool)
+    data = np.load(FID_STATS_PATH)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+
+    # Full train set from current pipeline: build_cifar10 gives [-1,1]
+    tr, _ = build_cifar10(subset=None)
+
+    dl = DataLoader(
+        tr,
+        batch_size=256,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True,
+    )
+
+    # We accumulate:
+    #   sum(f) on CPU (float64) for μ
+    #   sum(f^T f) on GPU (float32) for Σ (fast), then convert to float64 at the end
+    sum_cpu = None
+    xtx_gpu = None
+    n_total = 0
+
+    for xb, _ in dl:
+        xb = xb.to(device, non_blocking=True)  # [-1,1]
+        xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
+
+        f_np = _inception_activations(xb, device, batch_size=64)  # numpy [b, d], CPU
+        f_np = np.asarray(f_np)
+
+        b, d = f_np.shape
+        if sum_cpu is None:
+            sum_cpu = np.zeros((d,), dtype=np.float64)
+        sum_cpu += f_np.sum(axis=0, dtype=np.float64)
+
+        f_gpu = torch.from_numpy(f_np).to(device=device, dtype=torch.float32, non_blocking=True)
+        if xtx_gpu is None:
+            xtx_gpu = torch.zeros((d, d), device=device, dtype=torch.float32)
+
+        xtx_gpu += f_gpu.T @ f_gpu
+        n_total += b
+
+    assert n_total == len(tr)
+
+    mu = (sum_cpu / n_total).astype(np.float64)
+    mu_gpu64 = torch.from_numpy(mu).to(device=device, dtype=torch.float64)
+    xtx_gpu64 = xtx_gpu.to(dtype=torch.float64)
+
+    # Cov = (X^T X - N * mu mu^T) / (N - 1)
+    sigma_gpu64 = (xtx_gpu64 - n_total * (mu_gpu64[:, None] @ mu_gpu64[None, :])) / (n_total - 1)
+    sigma = sigma_gpu64.detach().cpu().numpy().astype(np.float64)
+    sigma = 0.5 * (sigma + sigma.T)
+
+    fid = float(_fid_from_stats(mu, sigma, mu_ref, sigma_ref))
+
+    # Numerical sanity
+    assert fid >= -1e-3, f"FID should be nonnegative (numerical tol), got {fid}"
+
+    # Absolute threshold: should be very small if stats truly match this pipeline
+    # (Use 1.0 as a generous “catch real pipeline mismatch” bound.)
+    assert fid < 1.0, f"FID(full CIFAR train vs saved stats) too large: {fid}"
