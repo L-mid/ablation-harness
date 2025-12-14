@@ -256,6 +256,7 @@ def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
 
 # good to know:
 
+
 @pytest.mark.skipif(os.environ.get("RUN_FID_TREND") != "1", reason="set RUN_FID_TREND=1 to run")
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.skipif(not FID_STATS_PATH.exists(), reason="Full FID stats file not found")
@@ -295,7 +296,6 @@ def test_fid_cifar_vs_full_stats_trend_improves_with_n():
 
     # allow tiny numerical weirdness slack, but overall should improve
     assert fid_big <= fid_small + 0.5, (fid_small, fid_big)
-
 
 
 # Large test for emergencies
