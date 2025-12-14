@@ -160,14 +160,15 @@ def test_fid_cifar_train_vs_stats_not_insane():
         pin_memory=True,
     )
     feats = []
-    torch.cuda.empty_cache()  # optional, helps after prior GPU tests
-
     for xb, _ in dl:
-        xb = xb.to(device, non_blocking=True)  # [-1,1]
-        xb = (xb.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
-        feats.append(_inception_activations(xb, device, batch_size=64))
+        xb = xb.to(device, non_blocking=True)
+        xb = (xb.clamp(-1, 1) + 1.0) / 2.0
 
-    feats = torch.cat(feats, dim=0).to("cpu", dtype=torch.float64)  # CPU float64
+        f_np = _inception_activations(xb, device, batch_size=64)   # np.ndarray [b, D]
+        f_t  = torch.from_numpy(f_np)                              # CPU torch.Tensor (shares memory)
+        feats.append(f_t)
+
+    feats = torch.cat(feats, dim=0).to(dtype=torch.float64)  # already CPU
     mu_real_t = feats.mean(dim=0)
     xc = feats - mu_real_t
     sigma_real_t = (xc.T @ xc) / (feats.shape[0] - 1)
