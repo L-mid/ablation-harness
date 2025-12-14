@@ -197,47 +197,6 @@ def test_fid_cifar_train_vs_stats_not_insane():
     assert fid < 20.0, f"FID(CIFAR vs stats) too large: {fid}"
 
 
-@pytest.mark.skipif(os.environ.get("RUN_FID_TREND") != "1", reason="set RUN_FID_TREND=1 to run")
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
-@pytest.mark.skipif(not FID_STATS_PATH.exists(), reason="Full FID stats file not found")
-def test_fid_cifar_vs_full_stats_trend_improves_with_n():
-    """
-    Tests two fids against each other to check for improvement.
-    Run this explicitly with: RUN_FID_TREND=1 pytest -q tests/test_fid.py::test_fid_cifar_vs_full_stats_trend_improves_with_n
-    """
-    device = torch.device("cuda")
-    data = np.load(FID_STATS_PATH)
-    mu_ref = data["mu"].astype(np.float64)
-    sigma_ref = data["sigma"].astype(np.float64)
-
-    tr, _ = build_cifar10(subset=None)
-
-    def fid_for_n(n: int, seed: int = 0) -> float:
-        rng = np.random.default_rng(seed)
-        idx = rng.choice(len(tr), size=n, replace=False).astype(np.int64)
-        dl = DataLoader(Subset(tr, idx.tolist()), batch_size=64, shuffle=False, num_workers=2, pin_memory=True)
-
-        feats = []
-        for xb, _ in dl:
-            xb = xb.to(device, non_blocking=True)
-            xb = (xb.clamp(-1, 1) + 1.0) / 2.0
-            feats.append(torch.from_numpy(_inception_activations(xb, device, batch_size=64)))
-
-        feats = torch.cat(feats, dim=0).to(dtype=torch.float64)
-        mu = feats.mean(dim=0).numpy()
-        xc = feats - torch.from_numpy(mu).to(feats)
-        sigma = ((xc.T @ xc) / (feats.shape[0] - 1)).numpy()
-        sigma = 0.5 * (sigma + sigma.T)
-
-        return float(_fid_from_stats(mu, sigma, mu_ref, sigma_ref))
-
-    fid_small = fid_for_n(2048, seed=0)
-    fid_big = fid_for_n(8192, seed=0)
-
-    # allow tiny numerical weirdness slack, but overall should improve
-    assert fid_big <= fid_small + 0.5, (fid_small, fid_big)
-
-
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
 @pytest.mark.skipif(not FID_STATS_SMALL_PATH.exists(), reason="Small FID stats file not found (make using make_subset_fid_stats.py)")
 def test_fid_cifar_matches_small_stats_near_zero():
@@ -293,6 +252,50 @@ def test_fid_spd_mismatched_bases_matches_reference_and_nonnegative():
     assert np.isfinite(fid)
     assert fid >= -1e-3
     assert abs(fid - fid_ref) < 1e-6, f"_fid_from_stats drifted from reference: {fid} vs {fid_ref}"
+
+
+# good to know:
+
+@pytest.mark.skipif(os.environ.get("RUN_FID_TREND") != "1", reason="set RUN_FID_TREND=1 to run")
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA not available")
+@pytest.mark.skipif(not FID_STATS_PATH.exists(), reason="Full FID stats file not found")
+def test_fid_cifar_vs_full_stats_trend_improves_with_n():
+    """
+    Tests two fids against each other to check for improvement.
+    Run this explicitly with: RUN_FID_TREND=1 pytest -q tests/test_fid.py::test_fid_cifar_vs_full_stats_trend_improves_with_n
+    """
+    device = torch.device("cuda")
+    data = np.load(FID_STATS_PATH)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+
+    tr, _ = build_cifar10(subset=None)
+
+    def fid_for_n(n: int, seed: int = 0) -> float:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(tr), size=n, replace=False).astype(np.int64)
+        dl = DataLoader(Subset(tr, idx.tolist()), batch_size=64, shuffle=False, num_workers=2, pin_memory=True)
+
+        feats = []
+        for xb, _ in dl:
+            xb = xb.to(device, non_blocking=True)
+            xb = (xb.clamp(-1, 1) + 1.0) / 2.0
+            feats.append(torch.from_numpy(_inception_activations(xb, device, batch_size=64)))
+
+        feats = torch.cat(feats, dim=0).to(dtype=torch.float64)
+        mu = feats.mean(dim=0).numpy()
+        xc = feats - torch.from_numpy(mu).to(feats)
+        sigma = ((xc.T @ xc) / (feats.shape[0] - 1)).numpy()
+        sigma = 0.5 * (sigma + sigma.T)
+
+        return float(_fid_from_stats(mu, sigma, mu_ref, sigma_ref))
+
+    fid_small = fid_for_n(2048, seed=0)
+    fid_big = fid_for_n(8192, seed=0)
+
+    # allow tiny numerical weirdness slack, but overall should improve
+    assert fid_big <= fid_small + 0.5, (fid_small, fid_big)
+
 
 
 # Large test for emergencies
@@ -372,4 +375,4 @@ def test_fid_cifar_train_vs_full_stats_absolute():
 
     # Absolute threshold: should be very small if stats truly match this pipeline
     # (Use 1.0 as a generous “catch real pipeline mismatch” bound.)
-    assert fid < 1.0, f"FID(full CIFAR train vs saved stats) too large: {fid}"
+    assert fid < 0.1, f"FID(full CIFAR train vs saved stats) too large: {fid}"
