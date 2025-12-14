@@ -2,12 +2,6 @@
 Various FID insurance.
 
 
-all others in tol on both:
-
-test fid stats not insane:
-FID(real CIFAR via current pipeline, stats) = 10.839326010741104 (cuda default torch) (over 10).
-FID(real CIFAR via current pipeline, stats) = 10.834498518689713 (cuda pinned torch)
-
 """
 
 import os
