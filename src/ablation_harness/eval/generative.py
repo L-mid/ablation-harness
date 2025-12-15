@@ -119,7 +119,7 @@ def _fid_for_generated(
     batch_size: int = 64,
     seed: int = 0,
 ) -> float:
-    ...
+
     total_batches = math.ceil(n_samples / batch_size)
     print(f"[fid] Generating {n_samples} images -- {total_batches} batches")
     print_on_batch = 1
@@ -213,10 +213,12 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
 
         imgs = []
         remaining = n
+        batch_k = 0
         while remaining > 0:
             b = min(B, remaining)
-            imgs.append(_sample(model_ema, (b, 3, 32, 32), q, sampler, nfe, seed, device))
+            imgs.append(_sample(model_ema, (b, 3, 32, 32), q, sampler, nfe, seed + batch_k, device))
             remaining -= b
+            batch_k += 1
         imgs = torch.cat(imgs, dim=0)  # in [-1, 1]
 
         if getattr(g, "save_images", False):

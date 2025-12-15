@@ -78,6 +78,35 @@ class EvalFinalCfg:
     save_images: bool = False
 
 
+@dataclass
+class EvalReconCfg:
+    """
+    Val reconstruction diagnositic for diffusion:
+        sample t, form x_t from x0, predict eps, reconstruct x0_hat, log metrics + images.
+    """
+
+    enabled: bool = False
+    every: int = 4
+
+    # how much val to average over each time run recon.
+    n_batches: int = 4
+
+    # timestep selection
+    t_mode: Literal["uniform", "fixed"] = "uniform"
+    t_values: Optional[List[int]] = None  # used if t_mode="fixed"
+
+    # metrics
+    metrics: List[Literal["mse", "psnr", "l1"]] = field(default_factory=lambda: ["mse", "psnr"])
+    max_val: float = 2.0  # image dynamic range for PSNR if x in [-1, 1]
+
+    # how many images to visualize (pairs: x0 vs x0_hat)
+    n_images: int = 16
+    save_images: bool = True
+
+    # logging
+    log_prefix: str = "val/recon"
+
+
 # --- Top-level eval config (keeps legacy fields, adds structured tasks) ---
 
 
@@ -91,6 +120,7 @@ class EvalsCfg:
     kid: EvalKidCfg = field(default_factory=EvalKidCfg)
     fid_milestone: EvalFidMilestoneCfg = field(default_factory=EvalFidMilestoneCfg)
     final: EvalFinalCfg = field(default_factory=EvalFinalCfg)
+    recon: EvalReconCfg = field(default_factory=EvalReconCfg)
 
 
 @dataclass
@@ -201,7 +231,7 @@ class StudySpec:
     diffusion: DiffusionCfg = field(default_factory=DiffusionCfg)
 
 
-# ---- Runtime (what trainer actually needs) ----
+# ---- Runtime (for compression in trainer if wanted) ----
 
 
 @dataclass

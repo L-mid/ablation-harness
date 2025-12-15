@@ -1,0 +1,114 @@
+schema: study/v1
+study_name: min_snr
+out_dir: "runs/"
+seed: 1077
+metric: val/fid
+
+_experiment:
+  name: "e10b-minsnr-fixed-ddim-nfe20-10k-bc64"
+
+device: null
+deterministic: true
+clean_run: false
+
+data:
+  dataset: "cifar10"
+  subset: null
+  batch_size: 4
+  num_workers: 2
+  shuffle: true
+
+model:
+  name: "unet_cifar32"
+  base_channels: 64
+
+ema:
+  enabled: true
+  decay: 0.999
+
+diffusion:
+  enabled: true
+  beta_schedule: "cosine"
+
+optim:
+  optimizer: adam
+  lr: 1.0e-4
+
+train:
+  total_steps: 2
+  grad_clip: 1.0
+  amp: true
+
+loss:
+  weighting: "minsnr"
+  minsnr_gamma: 5.0
+
+curvature:
+  enabled: false
+  method: "hutchinson"
+  probes: 16
+  log_prefix: "curvature/hutch"
+
+eval:
+  recon:
+    enabled: false
+    every: 1
+    n_batches: 4
+    t_mode: "fixed"
+    t_values: [0, 10, 50, 200, 500, 900]
+    metrics: ["mse", "psnr"]
+    save_images: true
+    n_images: 4
+    max_val: 2.0
+    log_prefix: "val/recon"
+
+  quick: false
+
+  grid:
+    enabled: true
+    every: 1
+    sampler: ddim
+    nfe: 20
+    n_samples: 2
+    save_images: true
+
+  kid:
+    enabled: false
+    every: 4000
+    n_samples: 1024
+    repeats: 3
+    sampler: ddim
+    nfe: 20
+
+
+  fid_milestone:
+    enabled: true
+    every: 1
+    run_if_kid_improved_pct: 0.0
+    sampler: ddim
+    nfe: 20
+    n_samples: 2
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+  final:
+    enabled: true
+    at_end: true
+    sampler: ddim
+    nfe: 20
+    n_samples: 2
+    fid_stats: "stats/cifar10_inception_train.npz"
+
+logging:
+  enable: false
+  backends: ["tensorboard"]
+  log_every_n_steps: 1
+
+  wandb:
+    mode: disabled
+    project: min_snr
+    run_name: "e10b-minsnr-fixed-ddim-nfe20-10k-bc64"
+    tags: ["e10", "e10b", "sampler", "ddim", "nfe20", "minsnr", "gamma5", "10k", "bc64", "recon"]
+    notes: "e10b: Sampler sanity. Fixed Min-SNR config; evaluate DDIM @ NFE=20 + val reconstruction metrics/images."
+
+  tensorboard:
+    flush_secs: 10

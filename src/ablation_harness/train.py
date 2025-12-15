@@ -64,6 +64,158 @@ def _compute_grad_stats(model) -> Dict[str, float]:
     }
 
 
+def _diffusion_val_recon(*, model_eval, q, val_loader, recon_cfg, device, out_dir):  # noqa C901
+    """
+    Recon definition:
+        x0 ~ val
+        t ~ (uniform or fixed)
+        xt = sqrt(ab_t) * x0 + sqrt(1-ab_t) * eps
+        eps_hat = model(xt, t)
+        x0_hat = (xt - sqrt(1-ab_t)*eps_hat)/sqrt(ab_t)
+    Logs: mse/psnr/(l1). In fixed mode, logs per-t keys.
+    """
+    import math
+    import os
+
+    import torch
+    import torch.nn.functional as F
+
+    alpha_bar = q["alpha_bar"]
+    K = int(alpha_bar.shape[0])
+
+    prefix = getattr(recon_cfg, "log_prefix", "val/recon")
+    metrics = set(getattr(recon_cfg, "metrics", ["mse", "psnr"]))
+    max_val = float(getattr(recon_cfg, "max_val", 2.0))
+    n_batches = int(getattr(recon_cfg, "n_batches", 1))
+    n_images = int(getattr(recon_cfg, "n_images", 16))
+    save_images = bool(getattr(recon_cfg, "save_images", True))
+
+    t_mode = getattr(recon_cfg, "t_mode", "uniform")
+
+    def _run_recon_for_t(t0: int | None):
+        """
+        Runs recon over n_batches.
+        If t0 is None: uniform t per-sample.
+        If t0 is int: fixed t for all samples.
+        Returns: (mse_mean, l1_mean, psnr, vis_x0, vis_x0_hat)
+        """
+        it = iter(val_loader)
+
+        mse_sum = 0.0
+        l1_sum = 0.0
+        n_tot = 0
+
+        vis_x0 = None
+        vis_x0_hat = None
+
+        with torch.no_grad():
+            for _bi in range(n_batches):
+                try:
+                    images, _labels = next(it)
+                except StopIteration:
+                    it = iter(val_loader)
+                    images, _labels = next(it)
+
+                x0 = images.to(device)
+                B = x0.shape[0]
+
+                if t0 is None:
+                    t = torch.randint(0, K, (B,), device=device, dtype=torch.long)
+                else:
+                    t = torch.full((B,), int(t0), device=device, dtype=torch.long)
+
+                ab = alpha_bar[t].to(device=device, dtype=x0.dtype).view(B, 1, 1, 1)
+                sqrt_ab = torch.sqrt(ab)
+                sqrt_1mab = torch.sqrt((1.0 - ab).clamp(min=0.0))
+
+                eps = torch.randn_like(x0)
+                xt = sqrt_ab * x0 + sqrt_1mab * eps
+
+                eps_hat = model_eval(xt, t)
+                x0_hat = (xt - sqrt_1mab * eps_hat) / sqrt_ab.clamp(min=1e-8)
+                x0_hat = x0_hat.clamp(-1, 1)
+
+                mse = F.mse_loss(x0_hat, x0, reduction="mean").item()
+                l1 = (x0_hat - x0).abs().mean().item()
+
+                mse_sum += mse * B
+                l1_sum += l1 * B
+                n_tot += B
+
+                if vis_x0 is None:
+                    vis_x0 = x0[:n_images].detach()
+                    vis_x0_hat = x0_hat[:n_images].detach()
+
+        mse_mean = mse_sum / max(1, n_tot)
+        l1_mean = l1_sum / max(1, n_tot)
+        psnr = 20.0 * math.log10(max_val / math.sqrt(max(1e-12, mse_mean)))
+        return mse_mean, l1_mean, psnr, vis_x0, vis_x0_hat
+
+    def _save_pair(vis_x0, vis_x0_hat, filename: str):
+        if (not save_images) or (vis_x0 is None):
+            return
+        try:
+            import torchvision.utils as vutils
+
+            os.makedirs(out_dir, exist_ok=True)
+            x0_01 = (vis_x0.clamp(-1, 1) + 1.0) / 2.0
+            x0h_01 = (vis_x0_hat.clamp(-1, 1) + 1.0) / 2.0
+            both = torch.cat([x0_01, x0h_01], dim=0)
+            grid = vutils.make_grid(both, nrow=vis_x0.shape[0], padding=2)
+            vutils.save_image(grid, os.path.join(out_dir, filename))
+        except Exception as e:
+            out[f"{prefix}_save_error"] = str(e)
+
+    out = {}
+
+    # ---- fixed: per-t keys ----
+    if t_mode == "fixed":
+        t_values = getattr(recon_cfg, "t_values", None) or [K // 2]
+        # sanitize + keep order
+        t_values = [int(t) for t in t_values if 0 <= int(t) < K]
+
+        mse_list = []
+        l1_list = []
+        psnr_list = []
+
+        for t0 in t_values:
+            mse_mean, l1_mean, psnr, vis_x0, vis_x0_hat = _run_recon_for_t(t0)
+
+            mse_list.append(mse_mean)
+            l1_list.append(l1_mean)
+            psnr_list.append(psnr)
+
+            if "mse" in metrics:
+                out[f"{prefix}_mse_t{t0:04d}"] = float(mse_mean)
+            if "l1" in metrics:
+                out[f"{prefix}_l1_t{t0:04d}"] = float(l1_mean)
+            if "psnr" in metrics:
+                out[f"{prefix}_psnr_t{t0:04d}"] = float(psnr)
+
+            _save_pair(vis_x0, vis_x0_hat, f"recon_t{t0:04d}.png")
+
+        # Handy scalar summary (optional but useful)
+        if mse_list and "mse" in metrics:
+            out[f"{prefix}_mse_fixed_mean"] = float(sum(mse_list) / len(mse_list))
+        if psnr_list and "psnr" in metrics:
+            out[f"{prefix}_psnr_fixed_mean"] = float(sum(psnr_list) / len(psnr_list))
+
+    # ---- uniform: keep old behavior ----
+    else:
+        mse_mean, l1_mean, psnr, vis_x0, vis_x0_hat = _run_recon_for_t(None)
+
+        if "mse" in metrics:
+            out[f"{prefix}_mse"] = float(mse_mean)
+        if "l1" in metrics:
+            out[f"{prefix}_l1"] = float(l1_mean)
+        if "psnr" in metrics:
+            out[f"{prefix}_psnr"] = float(psnr)
+
+        _save_pair(vis_x0, vis_x0_hat, "recon_x0_vs_x0hat.png")
+
+    return out
+
+
 def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     """Running in the trainer."""
     rt: RuntimeConfig
@@ -114,7 +266,7 @@ def run(config_dict: Dict[str, Any]) -> Dict[str, Any]:
     # ----
     # NEW: branch for diffusion vs classification ----
     if _is_diffusion(rt):
-        return _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path, git_hash)
+        return _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger, metrics_path, git_hash)
     else:
         return _run_classification(rt, device, layout, train_loader, val_loader, logger, metrics_path, git_hash)
 
@@ -179,7 +331,7 @@ def _run_classification(rt, device, layout, train_loader, val_loader, logger, me
     }
 
 
-def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_path, git_hash):  # noqa C901
+def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger, metrics_path, git_hash):  # noqa C901
     """
     Minimal diffusion runner: K=1000 training steps, subset-NFE sampling for eval,
     EMA eval weights, and checkpoint on -FID (so 'higher is better' still holds).
@@ -335,8 +487,9 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                 do_grid = getattr(E, "grid", None) and E.grid.enabled and (global_step % E.grid.every == 0)
                 do_kid = getattr(E, "kid", None) and E.kid.enabled and (global_step % E.kid.every == 0)
                 do_fidM = getattr(E, "fid_milestone", None) and E.fid_milestone.enabled and (global_step % E.fid_milestone.every == 0)
+                do_recon = getattr(E, "recon", None) and E.recon.enabled and (global_step % E.recon.every == 0)
 
-                if do_grid or do_kid or do_fidM:
+                if do_grid or do_kid or do_fidM or do_recon:
                     # Build an EMA eval copy only once for all tasks due this step
                     model_eval = build_unet_model(spec).to(device)
                     if getattr(rt, "ema_enabled", True):
@@ -380,6 +533,21 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                         # Checkpoint **on FID only** so “best” reflects an external metric
                         metric_for_ckpt = metric_from_fid(fid_val)  # converts FID to a "higher is better" score
                         best_metric = save_best_if_better(layout, model, optimizer, ema, global_step, best_metric, metric_for_ckpt)
+
+                # Recon (val diagnostic)
+                if do_recon:
+                    recon_dir = os.path.join(step_dir, "recon")
+                    recon_out = _diffusion_val_recon(
+                        model_eval=model_eval,
+                        q=q,
+                        val_loader=val_loader,
+                        recon_cfg=E.recon,
+                        device=device,
+                        out_dir=recon_dir,
+                    )
+                    if recon_out:
+                        logger.log_metrics({**recon_out, "step": global_step})
+                        mlog.log(global_step, epoch=0, **recon_out)
 
                 # Always keep a rolling "last" checkpoint at eval boundaries (optional but handy)
                 save_last(layout, model, optimizer, ema, global_step, best_metric[1])
