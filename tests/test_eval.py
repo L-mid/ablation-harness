@@ -28,11 +28,10 @@ def precompute_q(betas: torch.Tensor) -> dict[str, torch.Tensor]:
     posterior_log_var_clipped = torch.log(torch.clamp(posterior_var, min=1e-20))
 
     return {
-        "betas": betas,  # 🔴 this is the one your sampler needs
+        "betas": betas,
         "alphas": alphas,
         "alpha_bar": alpha_bar,
         "alpha_bar_prev": alpha_bar_prev,
-        # nice-to-have for ddpm_loss:
         "sqrt_alpha_bar": torch.sqrt(alpha_bar),
         "sqrt_one_minus_alpha_bar": torch.sqrt(1.0 - alpha_bar),
         "posterior_var": posterior_var,

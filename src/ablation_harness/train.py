@@ -200,7 +200,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
     from .tasks.diffusion.schedule import get_beta_schedule, precompute_q
 
     # ----- Build model/optimizer/EMA -----
-    model = build_unet_model(rt).to(device)
+    model = build_unet_model(spec).to(device)
     optimizer = build_optimizer(rt, model)
     ema = build_ema(model, rt)
 
@@ -338,7 +338,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
 
                 if do_grid or do_kid or do_fidM:
                     # Build an EMA eval copy only once for all tasks due this step
-                    model_eval = build_unet_model(rt).to(device)
+                    model_eval = build_unet_model(spec).to(device)
                     if getattr(rt, "ema_enabled", True):
                         ema.copy_to(model_eval)
                     else:
@@ -388,7 +388,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, logger, metrics_pa
                 break
 
     # === FINAL EVAL AT TRAIN END ===
-    model_eval = build_unet_model(rt).to(device)
+    model_eval = build_unet_model(spec).to(device)
     if getattr(rt, "ema_enabled", True):
         ema.copy_to(model_eval)
     else:

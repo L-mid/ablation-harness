@@ -112,8 +112,17 @@ class DataCfg:
 @dataclass
 class ModelCfg:
     name: Literal["mlp", "tinycnn"] = "mlp"
-    hidden: int = 64
+    in_channels: int = 3
+    out_channels: int = 3
+    base_channels: int = 32
+    channel_mults: List[int] = field(default_factory=lambda: [1, 2, 2, 2])
+    num_res_blocks: int = 2
     dropout: float = 0.0
+    time_embedding: int = 512
+    gn_groups: int = 32
+
+    # legacy, for classification
+    hidden: int = 64
 
 
 @dataclass
