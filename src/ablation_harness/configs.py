@@ -17,7 +17,7 @@ class LossConfig:
 
 @dataclass
 class CurvatureConfig:  # Hutchinson trace probe config
-    enabled: bool = True
+    enabled: bool = False
     method: str = "hutchinson"
     probes: int = 8
     log_prefix: str = "curvature/hutch"
@@ -46,12 +46,21 @@ class EvalGridCfg:
 class EvalKidCfg:
     enabled: bool = True
     every: int = 4_000
+
+    # sampling
     sampler: Literal["ddpm", "ddim"] = "ddim"
     nfe: int = 20
-    n_samples: int = 1_024
-    repeats: int = 3  # average across repeats for stability
+    n_samples: int = 1_024  # pool size (gen + real) for Inception features
     batch_size: int = 64
-    feature_cache: Optional[str] = None  # optional path to cached real features
+
+    # estimator stability
+    repeats: int = 3  # average across repeats
+    subset_size: int = 100  # subset per repeat (MMD on subsets)
+
+    # real feature pool definition + caching
+    real_split: Literal["train", "test"] = "train"
+    real_seed: int = 123
+    feature_cache: Optional[str] = None  # optional explicit path to cached REAL feats (.npy)
 
 
 @dataclass

@@ -5,6 +5,8 @@ from pathlib import Path
 import numpy as np
 import torch
 import torch.nn.functional as F
+import torchvision as tv
+from torch.utils.data import DataLoader, Subset
 from torchvision import models
 from torchvision.utils import save_image
 
@@ -173,6 +175,129 @@ def _fid_for_generated(
     return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
 
 
+# kid helpers:
+def _kid_mmd2_unbiased_poly(X: np.ndarray, Y: np.ndarray, degree: int = 3) -> float:
+    """
+    Unbiased MMD^2 with polynomial kernel used for KID:
+      k(x,y) = (x^T y / d + 1)^degree
+    X, Y: [m, d] float64
+    """
+    X = np.asarray(X, dtype=np.float64)
+    Y = np.asarray(Y, dtype=np.float64)
+    assert X.ndim == 2 and Y.ndim == 2
+    m, d = X.shape
+    assert Y.shape == (m, d)
+
+    Kxx = (X @ X.T) / d
+    Kyy = (Y @ Y.T) / d
+    Kxy = (X @ Y.T) / d
+
+    Kxx = (Kxx + 1.0) ** degree
+    Kyy = (Kyy + 1.0) ** degree
+    Kxy = (Kxy + 1.0) ** degree
+
+    # unbiased: exclude diagonal terms
+    sum_xx = (Kxx.sum() - np.trace(Kxx)) / (m * (m - 1))
+    sum_yy = (Kyy.sum() - np.trace(Kyy)) / (m * (m - 1))
+    sum_xy = Kxy.mean()
+    return float(sum_xx + sum_yy - 2.0 * sum_xy)
+
+
+def _kid_from_pools(
+    feats_gen: np.ndarray,
+    feats_real: np.ndarray,
+    subset_size: int,
+    repeats: int,
+    seed: int,
+) -> tuple[float, float, float]:
+    rng = np.random.default_rng(int(seed))
+    n = int(min(len(feats_gen), len(feats_real)))
+    feats_gen = np.asarray(feats_gen[:n], dtype=np.float64)
+    feats_real = np.asarray(feats_real[:n], dtype=np.float64)
+
+    m = int(min(subset_size, n))
+    reps = int(max(1, repeats))
+
+    vals = []
+    for r in range(reps):
+        ix = rng.choice(n, size=m, replace=False)
+        iy = rng.choice(n, size=m, replace=False)
+        vals.append(_kid_mmd2_unbiased_poly(feats_gen[ix], feats_real[iy], degree=3))
+
+    vals = np.asarray(vals, dtype=np.float64)
+    mean = float(vals.mean())
+    std = float(vals.std(ddof=1)) if reps > 1 else 0.0
+    sem = float(std / math.sqrt(reps)) if reps > 1 else 0.0
+    return mean, std, sem
+
+
+def _real_inception_feats_cifar10(
+    device: torch.device,
+    n_samples: int,
+    batch_size: int,
+    seed: int,
+    split: str = "train",
+    root: str = ".",
+    num_workers: int = 2,
+) -> np.ndarray:
+    train = str(split).lower() != "test"
+    ds = tv.datasets.CIFAR10(root=root, train=train, download=True, transform=tv.transforms.ToTensor())
+
+    rng = np.random.default_rng(int(seed))
+    idx = np.arange(len(ds))
+    rng.shuffle(idx)
+    idx = idx[: int(n_samples)]
+    dl = DataLoader(
+        Subset(ds, idx.tolist()),
+        batch_size=int(batch_size),
+        shuffle=False,
+        num_workers=int(num_workers),
+        pin_memory=(device.type == "cuda"),
+    )
+
+    feats = []
+    for xb, _ in dl:
+        feats.append(_inception_activations(xb, device, batch_size=int(batch_size)))
+    return np.concatenate(feats, axis=0).astype(np.float64)
+
+
+def _gen_inception_feats(
+    model_ema,
+    q,
+    device: torch.device,
+    n_samples: int,
+    sampler: str,
+    nfe: int,
+    batch_size: int,
+    seed: int,
+) -> np.ndarray:
+    remaining = int(n_samples)
+    feats_list = []
+    g_seed = int(seed)
+    sampler_name = str(sampler).lower()
+
+    while remaining > 0:
+        b = min(int(batch_size), remaining)
+        imgs = _sample(
+            model_ema,
+            (b, 3, 32, 32),
+            q=q,
+            sampler=sampler_name,
+            nfe=int(nfe),
+            seed=g_seed,
+            device=device,
+        )
+        imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
+        feats_list.append(_inception_activations(imgs, device, batch_size=int(batch_size)))
+        remaining -= b
+        g_seed += 1
+
+    return np.concatenate(feats_list, axis=0).astype(np.float64)
+
+
+# sampling helper
+
+
 def _sample(model, shape, q, sampler, nfe, seed, device):
     if str(sampler).lower() == "ddim":
         smp = DDIMSampler(q=q, nfe=nfe, eta=0.0, device=device)
@@ -232,18 +357,68 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         res["n"] += n
 
     def run_kid():
+        """A kid implementation."""
         kcfg = eval_cfg.kid
         if not getattr(kcfg, "enabled", False):
             return None
-        # Placeholder: wire up real KID later (feature extractor + polynomial MMD).
-        kid_now = None
-        res["kid"] = kid_now
+
+        n = int(getattr(kcfg, "n_samples", 1024))
+        repeats = int(getattr(kcfg, "repeats", 3))
+        subset_size = int(getattr(kcfg, "subset_size", 100))
+        sampler = str(getattr(kcfg, "sampler", "ddim")).lower()
+        nfe = int(getattr(kcfg, "nfe", 10))
+        batch_size = int(getattr(kcfg, "batch_size", 64))
+        seed = int(getattr(eval_cfg, "sample_seed", 0))
+        real_seed = int(getattr(kcfg, "real_seed", 123))
+        real_split = str(getattr(kcfg, "real_split", "train")).lower()
+
+        # cache real feats so repeated evals don’t keep recomputing them
+        real_cache = Path(kcfg.feature_cache) if getattr(kcfg, "feature_cache", None) else out_dir / f"kid_real_feats_{real_split}_n{n}_seed{real_seed}.npy"
+        if real_cache.exists():
+            feats_real = np.load(real_cache).astype(np.float64)
+        else:
+            feats_real = _real_inception_feats_cifar10(
+                device=device,
+                n_samples=n,
+                batch_size=batch_size,
+                seed=real_seed,
+                split=real_split,
+            )
+            np.save(real_cache, feats_real)
+
+        feats_gen = _gen_inception_feats(
+            model_ema=model_ema,
+            q=q,
+            device=device,
+            n_samples=n,
+            sampler=sampler,
+            nfe=nfe,
+            batch_size=batch_size,
+            seed=seed,
+        )
+
+        kid_mean, kid_std, kid_sem = _kid_from_pools(
+            feats_gen=feats_gen,
+            feats_real=feats_real,
+            subset_size=subset_size,
+            repeats=repeats,
+            seed=seed + 999,
+        )
+
+        res["kid"] = float(kid_mean)
         res["details"]["kid"] = {
-            "kid": kid_now,
-            "n": int(kcfg.n_samples),
-            "repeats": int(kcfg.repeats),
+            "kid_mean": float(kid_mean),
+            "kid_std": float(kid_std),
+            "kid_sem": float(kid_sem),
+            "n_pool": n,
+            "subset_size": subset_size,
+            "repeats": repeats,
+            "sampler": sampler,
+            "nfe": nfe,
+            "real_split": real_split,
+            "real_cache": str(real_cache),
         }
-        return kid_now
+        return float(kid_mean)
 
     def run_fid_milestone(kid_now):
         """Works fid: also persists kid stats to make gating for fid milestones successful."""
