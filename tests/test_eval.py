@@ -188,7 +188,7 @@ def test_quick_mode_clamps_grid_and_kid(monkeypatch, tmp_path):
     eval_cfg.kid.n_samples = 32
     eval_cfg.kid.nfe = 10
 
-    def fake_sample(model_ema, shape, q_, sampler, nfe_, seed, device):
+    def fake_sample(model_ema, shape, q, sampler, nfe, seed, device):
         return torch.zeros(shape)
 
     monkeypatch.setattr(gen_mod, "_sample", fake_sample)
@@ -203,7 +203,7 @@ def test_quick_mode_clamps_grid_and_kid(monkeypatch, tmp_path):
 
     # The details should reflect the clamped values
     assert res["details"]["grid"]["n"] == eval_cfg.grid.n_samples
-    assert res["details"]["kid"]["n"] == eval_cfg.kid.n_samples
+    assert res["details"]["kid"]["n_pool"] == eval_cfg.kid.n_samples
 
 
 def test_fid_milestone_runs_when_gate_zero(tmp_path):
