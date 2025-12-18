@@ -297,6 +297,7 @@ def _run_classification(rt, device, layout, train_loader, val_loader, logger, me
         best_val = float(state.get("best_val", best_val))
 
     t0 = time.perf_counter()
+
     last_val = {}
     with MetricLogger(str(metrics_path), fmt="jsonl") as mlog:
         for epoch in range(start_epoch, rt.epochs):
@@ -351,6 +352,17 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
     from .tasks.diffusion.models.unet_cifar32 import build_unet_model
     from .tasks.diffusion.schedule import get_beta_schedule, precompute_q
 
+    def _sync():
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            torch.cuda.synchronize(device)
+
+    def timed(fn):
+        _sync()
+        t0 = time.perf_counter()
+        out = fn()
+        _sync()
+        return out, (time.perf_counter() - t0)
+
     # ----- Build model/optimizer/EMA -----
     model = build_unet_model(spec).to(device)
     optimizer = build_optimizer(rt, model)
@@ -383,6 +395,12 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
 
     # Train loop (by steps)
     t0 = time.perf_counter()
+    eval_s_total = 0.0
+    eval_grid_s_total = 0.0
+    eval_recon_s_total = 0.0
+    eval_kid_s_total = 0.0
+    eval_fid_s_total = 0.0
+    eval_modelcopy_s_total = 0.0
     global_step = 0
     from itertools import cycle
 
@@ -489,34 +507,34 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
                 do_fidM = getattr(E, "fid_milestone", None) and E.fid_milestone.enabled and (global_step % E.fid_milestone.every == 0)
                 do_recon = getattr(E, "recon", None) and E.recon.enabled and (global_step % E.recon.every == 0)
 
-                if do_grid or do_kid or do_fidM or do_recon:
-                    # Build an EMA eval copy only once for all tasks due this step
-                    model_eval = build_unet_model(spec).to(device)
-                    if getattr(rt, "ema_enabled", True):
-                        ema.copy_to(model_eval)
-                    else:
-                        model_eval.load_state_dict(model.state_dict())
-
-                    with torch.no_grad():
-                        s = 0.0
-                        n = 0
-                        for p_tr, p_ev in zip(model.parameters(), model_eval.parameters()):
-                            s += (p_tr - p_ev).abs().mean().item()
-                            n += 1
-                        print(f"[debug (train.py)] mean |model - model_eval| per-param avg: {s / n:.6f}")
-
                 step_dir = os.path.join(layout.root, "eval", f"step_{global_step:06d}")
                 os.makedirs(step_dir, exist_ok=True)
 
+                _, dt = timed(lambda: None)  # placeholder if you want a clean pattern
+                t0m = time.perf_counter()
+                _sync()
+                model_eval = build_unet_model(spec).to(device)
+                if getattr(rt, "ema_enabled", True):
+                    ema.copy_to(model_eval)
+                else:
+                    model_eval.load_state_dict(model.state_dict())
+                _sync()
+                dt_model = time.perf_counter() - t0m
+                eval_modelcopy_s_total += dt_model
+
+                t_grid = t_kid = t_fid = t_recon = 0.0
+
                 # Grid (cheap visual check)
+
                 if do_grid:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "grid"), task="grid")
-                    # (No metrics to checkpoint against; it just writes a grid.)
+                    _, t_grid = timed(lambda: evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "grid"), task="grid"))
+                    eval_grid_s_total += t_grid
 
                 # KID (moderate; we’ll log it if you wire real KID later)
                 kid_now = None
                 if do_kid:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "kid"), task="kid")
+                    out, t_kid = timed(lambda: evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "kid"), task="kid"))
+                    eval_kid_s_total += t_kid
                     kid_now = out.get("kid", None)
                     if kid_now is not None:
                         logger.log_metrics({"val/kid": float(kid_now), "step": global_step})
@@ -524,7 +542,8 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
 
                 # FID milestone (heavy, gated internally by best-KID if you enabled that)
                 if do_fidM:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "fid_milestone"), task="fid_milestone")
+                    out, t_fid = timed(lambda: evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "fid_milestone"), task="fid_milestone"))
+                    eval_fid_s_total += t_fid
                     fid_val = out.get("fid", None)
                     if fid_val is not None:
                         logger.log_metrics({"val/fid": float(fid_val), "step": global_step})
@@ -536,18 +555,23 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
 
                 # Recon (val diagnostic)
                 if do_recon:
-                    recon_dir = os.path.join(step_dir, "recon")
-                    recon_out = _diffusion_val_recon(
-                        model_eval=model_eval,
-                        q=q,
-                        val_loader=val_loader,
-                        recon_cfg=E.recon,
-                        device=device,
-                        out_dir=recon_dir,
-                    )
-                    if recon_out:
-                        logger.log_metrics({**recon_out, "step": global_step})
-                        mlog.log(global_step, epoch=0, **recon_out)
+                    _, t_recon = timed(lambda: _diffusion_val_recon(model_eval=model_eval, q=q, val_loader=val_loader, recon_cfg=E.recon, device=device, out_dir=os.path.join(step_dir, "recon")))
+                    eval_recon_s_total += t_recon
+
+                eval_s = dt_model + t_grid + t_kid + t_fid + t_recon
+                eval_s_total += eval_s
+
+                timing_metrics = {
+                    "time/eval_s": float(eval_s),
+                    "time/eval/modelcopy_s": float(dt_model),
+                    "time/eval/grid_s": float(t_grid),
+                    "time/eval/kid_s": float(t_kid),
+                    "time/eval/fid_s": float(t_fid),
+                    "time/eval/recon_s": float(t_recon),
+                }
+
+                logger.log_metrics({**timing_metrics, "step": global_step})
+                mlog.log(global_step, epoch=0, **timing_metrics)
 
                 # Always keep a rolling "last" checkpoint at eval boundaries (optional but handy)
                 save_last(layout, model, optimizer, ema, global_step, best_metric[1])
@@ -587,6 +611,9 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
 
     save_last(layout, model, optimizer, ema, global_step, best_metric[1])
 
+    run_time_s = time.perf_counter() - t0
+    train_time_s = run_time_s - eval_s_total
+
     logger.on_run_end()
 
     # Compose return dict; expose best FID if known
@@ -603,6 +630,14 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
         "ckpt_last": str(layout.ckpts / "last.pt"),
         "ckpt_best": str(layout.ckpts / "best_val.pt"),
         "loss_log": str(metrics_path),
-        "run_time_s": time.perf_counter() - t0,
+        "run_time_s": run_time_s,
+        "time/eval_s_total": eval_s_total,
+        "time/eval_frac": eval_s_total / max(1e-9, run_time_s),
+        "time/train_s_est": train_time_s,
+        "time/eval/grid_s_total": eval_grid_s_total,
+        "time/eval/kid_s_total": eval_kid_s_total,
+        "time/eval/fid_s_total": eval_fid_s_total,
+        "time/eval/recon_s_total": eval_recon_s_total,
+        "time/eval/modelcopy_s_total": eval_modelcopy_s_total,
         "git_hash": git_hash,
     }
