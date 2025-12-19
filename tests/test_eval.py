@@ -234,7 +234,7 @@ def test_fid_milestone_skips_when_gate_positive_and_no_kid(tmp_path):
 
     detail = res["details"]["fid_milestone"]
     assert detail["skipped"] is True
-    assert detail["reason"] == "gate_not_met"
+    assert detail["reason"] == "kid_missing"
 
 
 def test_final_records_sampler_nfe_and_n(tmp_path):

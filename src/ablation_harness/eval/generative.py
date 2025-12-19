@@ -307,7 +307,7 @@ def _sample(model, shape, q, sampler, nfe, seed, device):
 
 
 @torch.no_grad()
-def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None):  # noqa C901
+def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=None, step=None, kid_now=None):  # noqa C901
     """
     Run diffusion eval(s). If `task` is None, run all enabled tasks in eval_cfg.
     task ∈ {"grid", "kid", "fid_milestone", "final", None}
@@ -321,6 +321,14 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    step_i = int(step) if step is not None else None
+    state_dir = Path(state_dir) if state_dir is not None else out_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    kid_last_file = state_dir / "kid_last.json"
+    kid_best_file = state_dir / "kid_best.json"
+
     device = next(model_ema.parameters()).device
     model_ema.eval()
 
@@ -373,7 +381,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         real_split = str(getattr(kcfg, "real_split", "train")).lower()
 
         # cache real feats so repeated evals don’t keep recomputing them
-        real_cache = Path(kcfg.feature_cache) if getattr(kcfg, "feature_cache", None) else out_dir / f"kid_real_feats_{real_split}_n{n}_seed{real_seed}.npy"
+        real_cache = Path(kcfg.feature_cache) if getattr(kcfg, "feature_cache", None) else state_dir / f"kid_real_feats_{real_split}_n{n}_seed{real_seed}.npy"
         if real_cache.exists():
             feats_real = np.load(real_cache).astype(np.float64)
         else:
@@ -418,9 +426,51 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
             "real_split": real_split,
             "real_cache": str(real_cache),
         }
+
+        # ---- persist state for later gating ----
+        prev_best = None
+        prev_best_step = None
+        if kid_best_file.exists():
+            try:
+                j = json.loads(kid_best_file.read_text())
+                prev_best = j.get("best_kid", None)
+                prev_best_step = j.get("best_step", None)
+            except Exception:
+                prev_best = None
+
+        # compute rel improvement vs previous best (percentage)
+        rel_improve_pct = None
+        if prev_best is not None:
+            rel_improve_pct = (float(prev_best) - float(kid_mean)) / max(float(prev_best), 1e-12) * 100.0
+
+        # update best (store best_step too)
+        updated_best = False
+        best_kid = float(prev_best) if prev_best is not None else None
+        best_step = int(prev_best_step) if prev_best_step is not None else None
+
+        if prev_best is None or float(kid_mean) < float(prev_best):
+            updated_best = True
+            best_kid = float(kid_mean)
+            best_step = step_i
+
+        kid_best_file.write_text(json.dumps({"best_kid": best_kid, "best_step": best_step}))
+
+        # write kid_last with "best_before" so fid gating can be computed stably
+        kid_last_file.write_text(
+            json.dumps(
+                {
+                    "step": step_i,
+                    "kid": float(kid_mean),
+                    "best_before": float(prev_best) if prev_best is not None else None,
+                    "rel_improve_pct": float(rel_improve_pct) if rel_improve_pct is not None else None,
+                    "updated_best": bool(updated_best),
+                }
+            )
+        )
+
         return float(kid_mean)
 
-    def run_fid_milestone(kid_now):
+    def run_fid_milestone(kid_now):  # noqa C901
         """Works fid: also persists kid stats to make gating for fid milestones successful."""
         fcfg = eval_cfg.fid_milestone
         if not getattr(fcfg, "enabled", False) or not getattr(fcfg, "fid_stats", None):
@@ -429,8 +479,37 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         gate = float(getattr(fcfg, "run_if_kid_improved_pct", 0.0))
         should_run = gate <= 0.0
 
+        if kid_now is None and gate > 0.0:
+
+            if kid_last_file.exists():
+                try:
+                    kid_last = json.loads(kid_last_file.read_text())
+                except Exception:
+                    kid_last = None
+            else:
+                kid_last = None
+
+            if kid_last is None:
+                res["details"]["fid_milestone"] = {"skipped": True, "reason": "kid_missing"}
+                return
+
+            # If step is provided, require same-step kid to avoid stale gating
+            if step_i is not None and kid_last.get("step", None) != step_i:
+                res["details"]["fid_milestone"] = {"skipped": True, "reason": "kid_stale", "kid_step": kid_last.get("step", None)}
+                return
+
+            kid_now = kid_last.get("kid", None)
+            prev_best = kid_last.get("best_before", None)
+
+            # decide gating from rel improvement stored by run_kid
+            if prev_best is None:
+                should_run = True  # first ever KID
+            else:
+                rel_improve = kid_last.get("rel_improve_pct", 0.0)
+                should_run = float(rel_improve) >= gate
+
         # Persist best KID across calls to make gating stateful
-        best_file = out_dir / "kid_best.json"
+        best_file = state_dir / "kid_best.json"
         prev_best = None
         if best_file.exists():
             try:
