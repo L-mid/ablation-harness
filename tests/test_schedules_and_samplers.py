@@ -109,7 +109,7 @@ def test_sampler_indexing_and_sampling_smoke():
 
     recorded_t = []
 
-    def fake_ddpm_step(self, model, x_t, t, t_prev=None):
+    def fake_ddpm_step(self, model, x_t, t, t_prev=None, generator=None):
         """t is [B]; record the scalar value (just use first element)"""
         recorded_t.append(t[0].detach().cpu())
         return x_t  # don't change x, keep it cheap
@@ -145,7 +145,7 @@ def test_sampler_indexing_and_sampling_smoke():
     recorded_t = []
     recorded_prev = []
 
-    def fake_ddim_step(self, model, x_t, t, t_prev):
+    def fake_ddim_step(self, model, x_t, t, t_prev, generator=None):
         recorded_t.append(t[0].detach().cpu())
         recorded_prev.append(t_prev.detach().cpu())
         return x_t

@@ -7,7 +7,7 @@ from .base import BaseSampler
 class DDPMSampler(BaseSampler):
     """Class based DDPM sampler."""
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def step(self, model, x_t, t, t_prev=None):
         """Per step math."""
         q = self.q
@@ -26,7 +26,7 @@ class DDPMSampler(BaseSampler):
         noise = torch.randn_like(x_t)
         return mean + torch.sqrt(var) * noise
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def sample(self, model, shape, seed=0):
         """Full DDPM sampler call (handles steps and schedule call)."""
         torch.manual_seed(seed)

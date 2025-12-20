@@ -12,6 +12,29 @@ from torchvision.utils import save_image
 
 from ablation_harness.tasks.diffusion.samplers import DDIMSampler, DDPMSampler
 
+_SAMPLER_CACHE: dict[tuple, object] = {}
+
+
+def _get_sampler(*, q, sampler: str, nfe: int, device: torch.device):
+    key = (str(sampler).lower(), int(nfe), str(device), id(q))
+    smp = _SAMPLER_CACHE.get(key)
+    if smp is None:
+        if str(sampler).lower() == "ddim":
+            smp = DDIMSampler(q=q, nfe=int(nfe), eta=0.0, device=device)
+        else:
+            smp = DDPMSampler(q=q, nfe=int(nfe), device=device)
+        _SAMPLER_CACHE[key] = smp
+    return smp
+
+
+# sampling helper
+
+
+def _sample(model, shape, q, sampler, nfe, seed, device):
+    smp = _get_sampler(q=q, sampler=sampler, nfe=nfe, device=device)
+    return smp.sample(model, shape, seed=seed)
+
+
 _INCEPTION_CACHE = None
 
 
@@ -110,71 +133,6 @@ def _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref) -> float:
     return fid
 
 
-def _fid_for_generated(
-    model_ema,
-    q,
-    device: torch.device,
-    n_samples: int,
-    sampler: str,
-    nfe: int,
-    fid_stats_path: str | Path,
-    batch_size: int = 64,
-    seed: int = 0,
-) -> float:
-
-    total_batches = math.ceil(n_samples / batch_size)
-    print(f"[fid] Generating {n_samples} images -- {total_batches} batches")
-    print_on_batch = 1
-
-    data = np.load(fid_stats_path)
-    mu_ref = data["mu"]
-    sigma_ref = data["sigma"]
-
-    remaining = int(n_samples)
-    feats_list = []
-
-    sampler_name = str(sampler).lower()
-    print(f"[fid] sampler={sampler_name}, nfe={nfe}, batch_size={batch_size}, seed={seed}")
-
-    g_seed = int(seed)
-    while remaining > 0:
-        b = min(batch_size, remaining)
-        batch_idx = (n_samples - remaining) // batch_size + 1
-        if (batch_idx % print_on_batch) == 0:
-            print(f"[fid] batch {batch_idx}/{total_batches} (size={b}, g_seed={g_seed})")
-
-        imgs = _sample(
-            model_ema,
-            (b, 3, 32, 32),
-            q=q,
-            sampler=sampler_name,
-            nfe=nfe,
-            seed=g_seed,
-            device=device,
-        )
-
-        # [-1,1] → [0,1]
-        imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0
-
-        # TEMP: break things on purpose
-        # version A: all zeros
-        # imgs = torch.zeros_like(imgs)
-        # version B: flip vertically
-        # imgs = imgs.flip(dims=[2])
-        print("[fid]   imgs mean/std:", float(imgs.mean()), float(imgs.std()))
-
-        feats = _inception_activations(imgs, device)
-        feats_list.append(feats)
-        remaining -= b
-        g_seed += 1
-
-    feats_all = np.concatenate(feats_list, axis=0).astype(np.float64)
-    mu_gen = np.mean(feats_all, axis=0)
-    sigma_gen = np.cov(feats_all, rowvar=False)
-
-    return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
-
-
 # kid helpers:
 def _kid_mmd2_unbiased_poly(X: np.ndarray, Y: np.ndarray, degree: int = 3) -> float:
     """
@@ -239,6 +197,7 @@ def _real_inception_feats_cifar10(
     split: str = "train",
     root: str = ".",
     num_workers: int = 2,
+    inception_batch_size: int | None = None,
 ) -> np.ndarray:
     train = str(split).lower() != "test"
     ds = tv.datasets.CIFAR10(root=root, train=train, download=True, transform=tv.transforms.ToTensor())
@@ -253,11 +212,14 @@ def _real_inception_feats_cifar10(
         shuffle=False,
         num_workers=int(num_workers),
         pin_memory=(device.type == "cuda"),
+        persistent_workers=(int(num_workers) > 0),
+        prefetch_factor=2 if int(num_workers) > 0 else None,
     )
 
+    ibs = int(inception_batch_size) if inception_batch_size is not None else int(batch_size)
     feats = []
     for xb, _ in dl:
-        feats.append(_inception_activations(xb, device, batch_size=int(batch_size)))
+        feats.append(_inception_activations(xb, device, batch_size=ibs))
     return np.concatenate(feats, axis=0).astype(np.float64)
 
 
@@ -270,9 +232,11 @@ def _gen_inception_feats(
     nfe: int,
     batch_size: int,
     seed: int,
+    inception_batch_size: int | None = None,
 ) -> np.ndarray:
     remaining = int(n_samples)
     feats_list = []
+    ibs = int(inception_batch_size) if inception_batch_size is not None else int(batch_size)
     g_seed = int(seed)
     sampler_name = str(sampler).lower()
 
@@ -288,7 +252,7 @@ def _gen_inception_feats(
             device=device,
         )
         imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
-        feats_list.append(_inception_activations(imgs, device, batch_size=int(batch_size)))
+        feats_list.append(_inception_activations(imgs, device, batch_size=ibs))
         remaining -= b
         g_seed += 1
 
@@ -306,18 +270,7 @@ def _fid_from_feats(feats_gen: np.ndarray, fid_stats_path: str | Path) -> float:
     return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
 
 
-# sampling helper
-
-
-def _sample(model, shape, q, sampler, nfe, seed, device):
-    if str(sampler).lower() == "ddim":
-        smp = DDIMSampler(q=q, nfe=nfe, eta=0.0, device=device)
-    else:
-        smp = DDPMSampler(q=q, nfe=nfe, device=device)
-    return smp.sample(model, shape, seed=seed)
-
-
-@torch.no_grad()
+@torch.inference_mode()
 def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=None, step=None, kid_now=None):  # noqa C901
     """
     Run diffusion eval(s). If `task` is None, run all enabled tasks in eval_cfg.
@@ -346,8 +299,8 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
     # Cache generated inception feats within this evaluate_diffusion() call
     gen_feats_cache: dict[tuple, np.ndarray] = {}
 
-    def get_gen_feats(*, n_samples: int, sampler: str, nfe: int, batch_size: int, seed: int) -> np.ndarray:
-        key = (int(n_samples), str(sampler).lower(), int(nfe), int(batch_size), int(seed))
+    def get_gen_feats(*, n_samples: int, sampler: str, nfe: int, batch_size: int, seed: int, inception_batch_size=None) -> np.ndarray:
+        key = (int(n_samples), str(sampler).lower(), int(nfe), int(batch_size), int(seed), int(inception_batch_size or 0))
         if key not in gen_feats_cache:
             gen_feats_cache[key] = _gen_inception_feats(
                 model_ema=model_ema,
@@ -410,7 +363,17 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
         real_split = str(getattr(kcfg, "real_split", "train")).lower()
 
         # cache real feats so repeated evals don’t keep recomputing them
-        real_cache = Path(kcfg.feature_cache) if getattr(kcfg, "feature_cache", None) else state_dir / f"kid_real_feats_{real_split}_n{n}_seed{real_seed}.npy"
+        cache_root = Path(getattr(kcfg, "feature_cache_dir", None) or "runs/_cache/kid_real_feats")
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        # keep honoring explicit kcfg.feature_cache if provided
+        if getattr(kcfg, "feature_cache", None):
+            real_cache = Path(kcfg.feature_cache)
+        else:
+            real_cache = cache_root / f"cifar10_{real_split}_n{n}_seed{real_seed}_inceptionv3_default.npy"
+
+        ibs = int(getattr(kcfg, "inception_batch_size", 0)) or batch_size
+
         if real_cache.exists():
             feats_real = np.load(real_cache).astype(np.float64)
         else:
@@ -420,6 +383,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
                 batch_size=batch_size,
                 seed=real_seed,
                 split=real_split,
+                inception_batch_size=ibs,
             )
             np.save(real_cache, feats_real)
 
@@ -429,6 +393,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
             nfe=nfe,
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
 
         kid_mean, kid_std, kid_sem = _kid_from_pools(
@@ -564,6 +529,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
         nfe = int(getattr(fcfg, "nfe", 50))
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(fcfg, "batch_size", 64))
+        ibs = int(getattr(fcfg, "inception_batch_size", 0)) or batch_size
 
         feats_gen = get_gen_feats(
             n_samples=n,
@@ -571,6 +537,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
             nfe=nfe,
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
         fid_val = _fid_from_feats(feats_gen, fcfg.fid_stats)
 
@@ -595,6 +562,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
         nfe = int(getattr(f, "nfe", 50))
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(f, "batch_size", 64))
+        ibs = int(getattr(f, "inception_batch_size", 0)) or batch_size
 
         feats_gen = get_gen_feats(
             n_samples=n,
@@ -602,6 +570,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
             nfe=nfe,
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
         fid_val = _fid_from_feats(feats_gen, f.fid_stats)
 
