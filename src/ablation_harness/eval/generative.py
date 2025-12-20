@@ -295,6 +295,17 @@ def _gen_inception_feats(
     return np.concatenate(feats_list, axis=0).astype(np.float64)
 
 
+def _fid_from_feats(feats_gen: np.ndarray, fid_stats_path: str | Path) -> float:
+    data = np.load(fid_stats_path)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+
+    feats = np.asarray(feats_gen, dtype=np.float64)
+    mu_gen = feats.mean(axis=0)
+    sigma_gen = np.cov(feats, rowvar=False)
+    return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
+
+
 # sampling helper
 
 
@@ -331,6 +342,24 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
 
     device = next(model_ema.parameters()).device
     model_ema.eval()
+
+    # Cache generated inception feats within this evaluate_diffusion() call
+    gen_feats_cache: dict[tuple, np.ndarray] = {}
+
+    def get_gen_feats(*, n_samples: int, sampler: str, nfe: int, batch_size: int, seed: int) -> np.ndarray:
+        key = (int(n_samples), str(sampler).lower(), int(nfe), int(batch_size), int(seed))
+        if key not in gen_feats_cache:
+            gen_feats_cache[key] = _gen_inception_feats(
+                model_ema=model_ema,
+                q=q,
+                device=device,
+                n_samples=int(n_samples),
+                sampler=str(sampler).lower(),
+                nfe=int(nfe),
+                batch_size=int(batch_size),
+                seed=int(seed),
+            )
+        return gen_feats_cache[key]
 
     res = {"fid": None, "kid": None, "n": 0, "details": {}}
 
@@ -394,10 +423,7 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
             )
             np.save(real_cache, feats_real)
 
-        feats_gen = _gen_inception_feats(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
@@ -539,17 +565,14 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(fcfg, "batch_size", 64))
 
-        fid_val = _fid_for_generated(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
-            fid_stats_path=fcfg.fid_stats,
             batch_size=batch_size,
             seed=seed,
         )
+        fid_val = _fid_from_feats(feats_gen, fcfg.fid_stats)
 
         res["fid"] = float(fid_val)
         res["details"]["fid_milestone"] = {
@@ -573,17 +596,14 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=Non
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(f, "batch_size", 64))
 
-        fid_val = _fid_for_generated(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
-            fid_stats_path=f.fid_stats,  # stats/<name>
             batch_size=batch_size,
             seed=seed,
         )
+        fid_val = _fid_from_feats(feats_gen, f.fid_stats)
 
         res["fid"] = float(fid_val)
         res["details"]["final"] = {
