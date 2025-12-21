@@ -35,20 +35,22 @@ def _sample(model, shape, q, sampler, nfe, seed, device):
     return smp.sample(model, shape, seed=seed)
 
 
-_INCEPTION_CACHE = None
+_INCEPTION_CACHE: dict[str, torch.nn.Module] = {}
 
 
 def _get_inception(device: torch.device):
-    """Return a cached Inception v3 backbone that outputs feature vectors."""
-    global _INCEPTION_CACHE
-    if _INCEPTION_CACHE is None:
-        # Use torchvision Inception v3; we take the output *before* the final FC.
-        weights = models.Inception_V3_Weights.DEFAULT
-        net = models.inception_v3(weights=weights, transform_input=False)
-        net.fc = torch.nn.Identity()  # fc now just passes through pooled features/logits
-        net.eval()
-        _INCEPTION_CACHE = net
-    return _INCEPTION_CACHE.to(device)
+    key = str(device)
+    net = _INCEPTION_CACHE.get(key)
+    if net is None:
+        with torch.inference_mode(False):
+            weights = models.Inception_V3_Weights.DEFAULT
+            net = models.inception_v3(weights=weights, transform_input=False)
+            net.fc = torch.nn.Identity()
+            net.eval().to(device)
+            for p in net.parameters():
+                p.requires_grad_(False)
+        _INCEPTION_CACHE[key] = net
+    return net
 
 
 def _inception_activations(
