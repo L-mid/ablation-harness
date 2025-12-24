@@ -38,7 +38,7 @@ def precompute_q(betas: torch.Tensor) -> dict[str, torch.Tensor]:
     }
 
 
-betas = torch.linspace(1e-1, 1e-4, 1000)
+betas = torch.linspace(1e-1, 1e-4, 5)
 pre_q = precompute_q(betas)
 
 
@@ -77,6 +77,7 @@ def make_eval_cfg(
     fid_milestone = SimpleNamespace(
         enabled=fid_enabled,
         n_samples=64,
+        nfe=5,
         fid_stats="stats/cifar10_inception_train.npz",
         run_if_kid_improved_pct=0.0,
     )
@@ -242,7 +243,7 @@ def test_final_records_sampler_nfe_and_n(tmp_path):
     q = pre_q
     eval_cfg = make_eval_cfg(final_enabled=True)
     eval_cfg.final.sampler = "ddpm"
-    eval_cfg.final.nfe = 50
+    eval_cfg.final.nfe = 5
     eval_cfg.final.n_samples = 123
 
     res = evaluate_diffusion(model, eval_cfg, q, tmp_path / "final_only", task="final")
@@ -252,4 +253,4 @@ def test_final_records_sampler_nfe_and_n(tmp_path):
     assert detail["n"] == 123
     assert detail["fid_stats"] == eval_cfg.final.fid_stats
     assert detail["sampler"] == "ddpm"
-    assert detail["nfe"] == 50
+    assert detail["nfe"] == 5

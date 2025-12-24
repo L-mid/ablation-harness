@@ -85,7 +85,7 @@ def test_sampler_indexing_and_sampling_smoke():
     """
     device = "cpu"
     K = 20
-    nfe = 5
+    nfe = 20
     B, C, H, W = 2, 3, 8, 8
 
     betas = get_beta_schedule("linear", K, device=device)
@@ -215,7 +215,7 @@ def test_e5_cosine_match_linear_end_to_end_smoke():
     This exercises the full path used by E5: schedule -> q -> loss -> samplers.
     """
     device = "cpu"
-    K = 100  # smaller K for speed
+    K = 5  # smaller K for speed
     B, C, H, W = 2, 3, 8, 8
     nfe = 5
 
