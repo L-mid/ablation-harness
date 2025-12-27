@@ -69,8 +69,23 @@ def precompute_q(betas: torch.Tensor):
 
 
 # ---------- training loss ----------
-def sample_timesteps(bsz: int, K: int, device):
-    return torch.randint(0, K, (bsz,), device=device)
+def sample_timesteps(
+    bsz: int,
+    K: int,
+    device,
+    t_min: int = 0,
+    t_max: int | None = None,
+):
+    # inclusive range [t_min, t_max]
+    t_min = int(t_min)
+    t_max = (K - 1) if t_max is None else int(t_max)
+
+    t_min = max(0, t_min)
+    t_max = min(K - 1, t_max)
+    if t_min > t_max:
+        raise ValueError(f"sample_timesteps: invalid range t_min={t_min} > t_max={t_max} (K={K})")
+
+    return torch.randint(t_min, t_max + 1, (bsz,), device=device)
 
 
 def q_sample(x0, t, q):
