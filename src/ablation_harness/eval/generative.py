@@ -12,20 +12,45 @@ from torchvision.utils import save_image
 
 from ablation_harness.tasks.diffusion.samplers import DDIMSampler, DDPMSampler
 
-_INCEPTION_CACHE = None
+_SAMPLER_CACHE: dict[tuple, object] = {}
+
+
+def _get_sampler(*, q, sampler: str, nfe: int, device: torch.device):
+    key = (str(sampler).lower(), int(nfe), str(device), id(q))
+    smp = _SAMPLER_CACHE.get(key)
+    if smp is None:
+        if str(sampler).lower() == "ddim":
+            smp = DDIMSampler(q=q, nfe=int(nfe), eta=0.0, device=device)
+        else:
+            smp = DDPMSampler(q=q, nfe=int(nfe), device=device)
+        _SAMPLER_CACHE[key] = smp
+    return smp
+
+
+# sampling helper
+
+
+def _sample(model, shape, q, sampler, nfe, seed, device):
+    smp = _get_sampler(q=q, sampler=sampler, nfe=nfe, device=device)
+    return smp.sample(model, shape, seed=seed)
+
+
+_INCEPTION_CACHE: dict[str, torch.nn.Module] = {}
 
 
 def _get_inception(device: torch.device):
-    """Return a cached Inception v3 backbone that outputs feature vectors."""
-    global _INCEPTION_CACHE
-    if _INCEPTION_CACHE is None:
-        # Use torchvision Inception v3; we take the output *before* the final FC.
-        weights = models.Inception_V3_Weights.DEFAULT
-        net = models.inception_v3(weights=weights, transform_input=False)
-        net.fc = torch.nn.Identity()  # fc now just passes through pooled features/logits
-        net.eval()
-        _INCEPTION_CACHE = net
-    return _INCEPTION_CACHE.to(device)
+    key = str(device)
+    net = _INCEPTION_CACHE.get(key)
+    if net is None:
+        with torch.inference_mode(False):
+            weights = models.Inception_V3_Weights.DEFAULT
+            net = models.inception_v3(weights=weights, transform_input=False)
+            net.fc = torch.nn.Identity()
+            net.eval().to(device)
+            for p in net.parameters():
+                p.requires_grad_(False)
+        _INCEPTION_CACHE[key] = net
+    return net
 
 
 def _inception_activations(
@@ -110,71 +135,6 @@ def _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref) -> float:
     return fid
 
 
-def _fid_for_generated(
-    model_ema,
-    q,
-    device: torch.device,
-    n_samples: int,
-    sampler: str,
-    nfe: int,
-    fid_stats_path: str | Path,
-    batch_size: int = 64,
-    seed: int = 0,
-) -> float:
-
-    total_batches = math.ceil(n_samples / batch_size)
-    print(f"[fid] Generating {n_samples} images -- {total_batches} batches")
-    print_on_batch = 1
-
-    data = np.load(fid_stats_path)
-    mu_ref = data["mu"]
-    sigma_ref = data["sigma"]
-
-    remaining = int(n_samples)
-    feats_list = []
-
-    sampler_name = str(sampler).lower()
-    print(f"[fid] sampler={sampler_name}, nfe={nfe}, batch_size={batch_size}, seed={seed}")
-
-    g_seed = int(seed)
-    while remaining > 0:
-        b = min(batch_size, remaining)
-        batch_idx = (n_samples - remaining) // batch_size + 1
-        if (batch_idx % print_on_batch) == 0:
-            print(f"[fid] batch {batch_idx}/{total_batches} (size={b}, g_seed={g_seed})")
-
-        imgs = _sample(
-            model_ema,
-            (b, 3, 32, 32),
-            q=q,
-            sampler=sampler_name,
-            nfe=nfe,
-            seed=g_seed,
-            device=device,
-        )
-
-        # [-1,1] → [0,1]
-        imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0
-
-        # TEMP: break things on purpose
-        # version A: all zeros
-        # imgs = torch.zeros_like(imgs)
-        # version B: flip vertically
-        # imgs = imgs.flip(dims=[2])
-        print("[fid]   imgs mean/std:", float(imgs.mean()), float(imgs.std()))
-
-        feats = _inception_activations(imgs, device)
-        feats_list.append(feats)
-        remaining -= b
-        g_seed += 1
-
-    feats_all = np.concatenate(feats_list, axis=0).astype(np.float64)
-    mu_gen = np.mean(feats_all, axis=0)
-    sigma_gen = np.cov(feats_all, rowvar=False)
-
-    return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
-
-
 # kid helpers:
 def _kid_mmd2_unbiased_poly(X: np.ndarray, Y: np.ndarray, degree: int = 3) -> float:
     """
@@ -239,6 +199,7 @@ def _real_inception_feats_cifar10(
     split: str = "train",
     root: str = ".",
     num_workers: int = 2,
+    inception_batch_size: int | None = None,
 ) -> np.ndarray:
     train = str(split).lower() != "test"
     ds = tv.datasets.CIFAR10(root=root, train=train, download=True, transform=tv.transforms.ToTensor())
@@ -253,11 +214,14 @@ def _real_inception_feats_cifar10(
         shuffle=False,
         num_workers=int(num_workers),
         pin_memory=(device.type == "cuda"),
+        persistent_workers=(int(num_workers) > 0),
+        prefetch_factor=2 if int(num_workers) > 0 else None,
     )
 
+    ibs = int(inception_batch_size) if inception_batch_size is not None else int(batch_size)
     feats = []
     for xb, _ in dl:
-        feats.append(_inception_activations(xb, device, batch_size=int(batch_size)))
+        feats.append(_inception_activations(xb, device, batch_size=ibs))
     return np.concatenate(feats, axis=0).astype(np.float64)
 
 
@@ -270,9 +234,11 @@ def _gen_inception_feats(
     nfe: int,
     batch_size: int,
     seed: int,
+    inception_batch_size: int | None = None,
 ) -> np.ndarray:
     remaining = int(n_samples)
     feats_list = []
+    ibs = int(inception_batch_size) if inception_batch_size is not None else int(batch_size)
     g_seed = int(seed)
     sampler_name = str(sampler).lower()
 
@@ -288,26 +254,26 @@ def _gen_inception_feats(
             device=device,
         )
         imgs = (imgs.clamp(-1, 1) + 1.0) / 2.0  # -> [0,1]
-        feats_list.append(_inception_activations(imgs, device, batch_size=int(batch_size)))
+        feats_list.append(_inception_activations(imgs, device, batch_size=ibs))
         remaining -= b
         g_seed += 1
 
     return np.concatenate(feats_list, axis=0).astype(np.float64)
 
 
-# sampling helper
+def _fid_from_feats(feats_gen: np.ndarray, fid_stats_path: str | Path) -> float:
+    data = np.load(fid_stats_path)
+    mu_ref = data["mu"].astype(np.float64)
+    sigma_ref = data["sigma"].astype(np.float64)
+
+    feats = np.asarray(feats_gen, dtype=np.float64)
+    mu_gen = feats.mean(axis=0)
+    sigma_gen = np.cov(feats, rowvar=False)
+    return _fid_from_stats(mu_gen, sigma_gen, mu_ref, sigma_ref)
 
 
-def _sample(model, shape, q, sampler, nfe, seed, device):
-    if str(sampler).lower() == "ddim":
-        smp = DDIMSampler(q=q, nfe=nfe, eta=0.0, device=device)
-    else:
-        smp = DDPMSampler(q=q, nfe=nfe, device=device)
-    return smp.sample(model, shape, seed=seed)
-
-
-@torch.no_grad()
-def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None):  # noqa C901
+@torch.inference_mode()
+def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task=None, state_dir=None, step=None, kid_now=None):  # noqa C901
     """
     Run diffusion eval(s). If `task` is None, run all enabled tasks in eval_cfg.
     task ∈ {"grid", "kid", "fid_milestone", "final", None}
@@ -321,8 +287,34 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    step_i = int(step) if step is not None else None
+    state_dir = Path(state_dir) if state_dir is not None else out_dir
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    kid_last_file = state_dir / "kid_last.json"
+    kid_best_file = state_dir / "kid_best.json"
+
     device = next(model_ema.parameters()).device
     model_ema.eval()
+
+    # Cache generated inception feats within this evaluate_diffusion() call
+    gen_feats_cache: dict[tuple, np.ndarray] = {}
+
+    def get_gen_feats(*, n_samples: int, sampler: str, nfe: int, batch_size: int, seed: int, inception_batch_size=None) -> np.ndarray:
+        key = (int(n_samples), str(sampler).lower(), int(nfe), int(batch_size), int(seed), int(inception_batch_size or 0))
+        if key not in gen_feats_cache:
+            gen_feats_cache[key] = _gen_inception_feats(
+                model_ema=model_ema,
+                q=q,
+                device=device,
+                n_samples=int(n_samples),
+                sampler=str(sampler).lower(),
+                nfe=int(nfe),
+                batch_size=int(batch_size),
+                seed=int(seed),
+            )
+        return gen_feats_cache[key]
 
     res = {"fid": None, "kid": None, "n": 0, "details": {}}
 
@@ -373,7 +365,17 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         real_split = str(getattr(kcfg, "real_split", "train")).lower()
 
         # cache real feats so repeated evals don’t keep recomputing them
-        real_cache = Path(kcfg.feature_cache) if getattr(kcfg, "feature_cache", None) else out_dir / f"kid_real_feats_{real_split}_n{n}_seed{real_seed}.npy"
+        cache_root = Path(getattr(kcfg, "feature_cache_dir", None) or "runs/_cache/kid_real_feats")
+        cache_root.mkdir(parents=True, exist_ok=True)
+
+        # keep honoring explicit kcfg.feature_cache if provided
+        if getattr(kcfg, "feature_cache", None):
+            real_cache = Path(kcfg.feature_cache)
+        else:
+            real_cache = cache_root / f"cifar10_{real_split}_n{n}_seed{real_seed}_inceptionv3_default.npy"
+
+        ibs = int(getattr(kcfg, "inception_batch_size", 0)) or batch_size
+
         if real_cache.exists():
             feats_real = np.load(real_cache).astype(np.float64)
         else:
@@ -383,18 +385,17 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
                 batch_size=batch_size,
                 seed=real_seed,
                 split=real_split,
+                inception_batch_size=ibs,
             )
             np.save(real_cache, feats_real)
 
-        feats_gen = _gen_inception_feats(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
 
         kid_mean, kid_std, kid_sem = _kid_from_pools(
@@ -418,9 +419,51 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
             "real_split": real_split,
             "real_cache": str(real_cache),
         }
+
+        # ---- persist state for later gating ----
+        prev_best = None
+        prev_best_step = None
+        if kid_best_file.exists():
+            try:
+                j = json.loads(kid_best_file.read_text())
+                prev_best = j.get("best_kid", None)
+                prev_best_step = j.get("best_step", None)
+            except Exception:
+                prev_best = None
+
+        # compute rel improvement vs previous best (percentage)
+        rel_improve_pct = None
+        if prev_best is not None:
+            rel_improve_pct = (float(prev_best) - float(kid_mean)) / max(float(prev_best), 1e-12) * 100.0
+
+        # update best (store best_step too)
+        updated_best = False
+        best_kid = float(prev_best) if prev_best is not None else None
+        best_step = int(prev_best_step) if prev_best_step is not None else None
+
+        if prev_best is None or float(kid_mean) < float(prev_best):
+            updated_best = True
+            best_kid = float(kid_mean)
+            best_step = step_i
+
+        kid_best_file.write_text(json.dumps({"best_kid": best_kid, "best_step": best_step}))
+
+        # write kid_last with "best_before" so fid gating can be computed stably
+        kid_last_file.write_text(
+            json.dumps(
+                {
+                    "step": step_i,
+                    "kid": float(kid_mean),
+                    "best_before": float(prev_best) if prev_best is not None else None,
+                    "rel_improve_pct": float(rel_improve_pct) if rel_improve_pct is not None else None,
+                    "updated_best": bool(updated_best),
+                }
+            )
+        )
+
         return float(kid_mean)
 
-    def run_fid_milestone(kid_now):
+    def run_fid_milestone(kid_now):  # noqa C901
         """Works fid: also persists kid stats to make gating for fid milestones successful."""
         fcfg = eval_cfg.fid_milestone
         if not getattr(fcfg, "enabled", False) or not getattr(fcfg, "fid_stats", None):
@@ -429,8 +472,37 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         gate = float(getattr(fcfg, "run_if_kid_improved_pct", 0.0))
         should_run = gate <= 0.0
 
+        if kid_now is None and gate > 0.0:
+
+            if kid_last_file.exists():
+                try:
+                    kid_last = json.loads(kid_last_file.read_text())
+                except Exception:
+                    kid_last = None
+            else:
+                kid_last = None
+
+            if kid_last is None:
+                res["details"]["fid_milestone"] = {"skipped": True, "reason": "kid_missing"}
+                return
+
+            # If step is provided, require same-step kid to avoid stale gating
+            if step_i is not None and kid_last.get("step", None) != step_i:
+                res["details"]["fid_milestone"] = {"skipped": True, "reason": "kid_stale", "kid_step": kid_last.get("step", None)}
+                return
+
+            kid_now = kid_last.get("kid", None)
+            prev_best = kid_last.get("best_before", None)
+
+            # decide gating from rel improvement stored by run_kid
+            if prev_best is None:
+                should_run = True  # first ever KID
+            else:
+                rel_improve = kid_last.get("rel_improve_pct", 0.0)
+                should_run = float(rel_improve) >= gate
+
         # Persist best KID across calls to make gating stateful
-        best_file = out_dir / "kid_best.json"
+        best_file = state_dir / "kid_best.json"
         prev_best = None
         if best_file.exists():
             try:
@@ -459,18 +531,17 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         nfe = int(getattr(fcfg, "nfe", 50))
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(fcfg, "batch_size", 64))
+        ibs = int(getattr(fcfg, "inception_batch_size", 0)) or batch_size
 
-        fid_val = _fid_for_generated(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
-            fid_stats_path=fcfg.fid_stats,
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
+        fid_val = _fid_from_feats(feats_gen, fcfg.fid_stats)
 
         res["fid"] = float(fid_val)
         res["details"]["fid_milestone"] = {
@@ -493,18 +564,17 @@ def evaluate_diffusion(model_ema, eval_cfg, q, out_dir, task: str | None = None)
         nfe = int(getattr(f, "nfe", 50))
         seed = int(getattr(eval_cfg, "sample_seed", 0))
         batch_size = int(getattr(f, "batch_size", 64))
+        ibs = int(getattr(f, "inception_batch_size", 0)) or batch_size
 
-        fid_val = _fid_for_generated(
-            model_ema=model_ema,
-            q=q,
-            device=device,
+        feats_gen = get_gen_feats(
             n_samples=n,
             sampler=sampler,
             nfe=nfe,
-            fid_stats_path=f.fid_stats,  # stats/<name>
             batch_size=batch_size,
             seed=seed,
+            inception_batch_size=ibs,
         )
+        fid_val = _fid_from_feats(feats_gen, f.fid_stats)
 
         res["fid"] = float(fid_val)
         res["details"]["final"] = {

@@ -151,6 +151,8 @@ def _diffusion_val_recon(*, model_eval, q, val_loader, recon_cfg, device, out_di
         psnr = 20.0 * math.log10(max_val / math.sqrt(max(1e-12, mse_mean)))
         return mse_mean, l1_mean, psnr, vis_x0, vis_x0_hat
 
+    saved = []
+
     def _save_pair(vis_x0, vis_x0_hat, filename: str):
         if (not save_images) or (vis_x0 is None):
             return
@@ -162,7 +164,9 @@ def _diffusion_val_recon(*, model_eval, q, val_loader, recon_cfg, device, out_di
             x0h_01 = (vis_x0_hat.clamp(-1, 1) + 1.0) / 2.0
             both = torch.cat([x0_01, x0h_01], dim=0)
             grid = vutils.make_grid(both, nrow=vis_x0.shape[0], padding=2)
+            path = os.path.join(out_dir, filename)
             vutils.save_image(grid, os.path.join(out_dir, filename))
+            saved.append(path)
         except Exception as e:
             out[f"{prefix}_save_error"] = str(e)
 
@@ -213,6 +217,7 @@ def _diffusion_val_recon(*, model_eval, q, val_loader, recon_cfg, device, out_di
 
         _save_pair(vis_x0, vis_x0_hat, "recon_x0_vs_x0hat.png")
 
+    out["media/recon_paths"] = saved
     return out
 
 
@@ -297,6 +302,7 @@ def _run_classification(rt, device, layout, train_loader, val_loader, logger, me
         best_val = float(state.get("best_val", best_val))
 
     t0 = time.perf_counter()
+
     last_val = {}
     with MetricLogger(str(metrics_path), fmt="jsonl") as mlog:
         for epoch in range(start_epoch, rt.epochs):
@@ -336,8 +342,11 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
     Minimal diffusion runner: K=1000 training steps, subset-NFE sampling for eval,
     EMA eval weights, and checkpoint on -FID (so 'higher is better' still holds).
     """
+    import json
     import os
     import time
+
+    import torch
 
     from .builders import build_ema
     from .checkpoint import metric_from_fid, save_best_if_better, save_last, try_resume
@@ -350,6 +359,17 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
     )
     from .tasks.diffusion.models.unet_cifar32 import build_unet_model
     from .tasks.diffusion.schedule import get_beta_schedule, precompute_q
+
+    def _sync():
+        if torch.cuda.is_available() and str(device).startswith("cuda"):
+            torch.cuda.synchronize()
+
+    def timed(fn):
+        _sync()
+        t0 = time.perf_counter()
+        out = fn()
+        _sync()
+        return out, (time.perf_counter() - t0)
 
     # ----- Build model/optimizer/EMA -----
     model = build_unet_model(spec).to(device)
@@ -371,20 +391,33 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
     log_every = spec.logging.log_every_n_steps
 
     # Resume
-    best_metric = (0, float("-inf"))  # we’ll store -FID here
+    best_metric = (0, float("-inf"))
+    global_step = 0
+
     state = try_resume(layout)
     if state:
-        best_metric = float(state.get("best_val", best_metric))
+        # restore step
+        global_step = int(state.get("global_step", state.get("epoch", 0)))
+
+        # restore best_metric as tuple
+        best_val = float(state.get("best_val", float("-inf")))
+        best_step = int(state.get("best_step", 0))
+        best_metric = (best_step, best_val)
+
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
         ema.load_state_dict(state["ema"])
-        start_epoch = int(state["epoch"]) + 1
-        best_metric = float(state.get("best_val", best_metric))
 
     # Train loop (by steps)
     t0 = time.perf_counter()
+    eval_s_total = 0.0
+    eval_grid_s_total = 0.0
+    eval_recon_s_total = 0.0
+    eval_kid_s_total = 0.0
+    eval_fid_s_total = 0.0
+    eval_modelcopy_s_total = 0.0
+    t_grid = t_kid = t_fid = t_recon = 0.0
     global_step = 0
-    from itertools import cycle
 
     with MetricLogger(str(metrics_path), fmt="jsonl") as mlog:
 
@@ -393,40 +426,59 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
         if getattr(loss_cfg, "weighting", "constant") == "minsnr":
             with torch.no_grad():
                 alpha_bar = q["alpha_bar"]  # [K]
-                K = alpha_bar.shape[0]
-                t_all = torch.arange(K, device=alpha_bar.device, dtype=torch.long)
+                K_sched = int(alpha_bar.shape[0])
+                t_all = torch.arange(K_sched, device=alpha_bar.device, dtype=torch.long)
                 snr_all = compute_snr_from_alphas_cumprod(alpha_bar, t_all)
-                gamma = torch.as_tensor(
+                gamma_t = torch.as_tensor(
                     getattr(loss_cfg, "minsnr_gamma", 5.0),
                     dtype=snr_all.dtype,
                     device=snr_all.device,
                 )
-                weight_all = torch.minimum(snr_all, gamma) / snr_all.clamp(min=1e-12)
+                weight_all = torch.minimum(snr_all, gamma_t) / snr_all.clamp(min=1e-12)
 
             curve_metrics = {
-                # arrays get stored as JSON lists in the jsonl logger
                 "mins_snr_curve/t": [int(x) for x in t_all.tolist()],
                 "mins_snr_curve/weight": [float(x) for x in weight_all.tolist()],
             }
-            logger.log_metrics({**curve_metrics, "step": 0})
+
+            # shared logger: scalars only (safe for all sinks)
+            logger.log_metrics(
+                {
+                    "mins_snr/gamma": float(gamma_t.item()),
+                    "mins_snr/K": float(K_sched),
+                    "mins_snr/weight_min": float(weight_all.min().item()),
+                    "mins_snr/weight_max": float(weight_all.max().item()),
+                },
+                step=0,
+            )
+
+            # jsonl: store the full curve arrays at step 0
             mlog.log(0, epoch=0, **curve_metrics)
+
+            # write a file + log as artifact to W&B (no sink pollution)
+            curve_path = os.path.join(layout.root, "eval", "mins_snr_curve.json")
+            os.makedirs(os.path.dirname(curve_path), exist_ok=True)
+            with open(curve_path, "w", encoding="utf-8") as f:
+                json.dump(curve_metrics, f)
+            logger.log_artifact(curve_path, name="mins_snr_curve")
 
         loss_cfg = getattr(spec, "loss", None)
         curvature_cfg = getattr(spec, "curvature", None)
 
-        for batch in cycle(train_loader):
+        train_iter = iter(train_loader)
+
+        while global_step < total_steps:
+            try:
+                batch = next(train_iter)
+            except StopIteration:
+                train_iter = iter(train_loader)
+                batch = next(train_iter)
+
             global_step += 1
-            print_global_step = 100
-
-            if (global_step % print_global_step) == 0:
-                print("[train.py] Current step is:", global_step)
-
             model.train()
 
-            # Pull images (normalize to [-1,1] if your dataset isn't already)
             images, labels = batch
             x0 = images.to(device)
-            # x0 = x0 * 2.0 - 1.0  # uncomment if your loader gives [0,1]
 
             log_this_step = (global_step % log_every) == 0
 
@@ -435,7 +487,7 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
                 x0=x0,
                 q=q,
                 loss_cfg=getattr(spec, "loss", None),
-                log_per_t_mse=log_this_step,  # 🔹 only compute per-t MSE on logging steps
+                log_per_t_mse=log_this_step,
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -469,87 +521,105 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
             if getattr(rt, "ema_enabled", True):
                 ema.update(model)
 
-            # --- Logging ---
-            if (global_step % log_every) == 0:
-                train_metrics = {
+            if log_this_step:
+                # --- start packet ---
+                scalars = {
                     "train/loss": float(loss.detach().cpu()),
                     **grad_stats,
                     **loss_info,
                     **curvature_metrics,
                 }
+                media = {}
 
-                logger.log_metrics({**train_metrics, "step": global_step})
-                mlog.log(global_step, epoch=0, **train_metrics)
-
-                # === EVAL: schedule & run (grid / kid / fid_milestone) ===
-                E = spec.eval  # EvalCfg with nested sections we added earlier
-
+                E = spec.eval
                 do_grid = getattr(E, "grid", None) and E.grid.enabled and (global_step % E.grid.every == 0)
                 do_kid = getattr(E, "kid", None) and E.kid.enabled and (global_step % E.kid.every == 0)
                 do_fidM = getattr(E, "fid_milestone", None) and E.fid_milestone.enabled and (global_step % E.fid_milestone.every == 0)
                 do_recon = getattr(E, "recon", None) and E.recon.enabled and (global_step % E.recon.every == 0)
 
-                if do_grid or do_kid or do_fidM or do_recon:
-                    # Build an EMA eval copy only once for all tasks due this step
-                    model_eval = build_unet_model(spec).to(device)
-                    if getattr(rt, "ema_enabled", True):
-                        ema.copy_to(model_eval)
-                    else:
-                        model_eval.load_state_dict(model.state_dict())
-
-                    with torch.no_grad():
-                        s = 0.0
-                        n = 0
-                        for p_tr, p_ev in zip(model.parameters(), model_eval.parameters()):
-                            s += (p_tr - p_ev).abs().mean().item()
-                            n += 1
-                        print(f"[debug (train.py)] mean |model - model_eval| per-param avg: {s / n:.6f}")
-
                 step_dir = os.path.join(layout.root, "eval", f"step_{global_step:06d}")
                 os.makedirs(step_dir, exist_ok=True)
+                eval_state_dir = os.path.join(layout.root, "eval_state")
+                os.makedirs(eval_state_dir, exist_ok=True)
 
-                # Grid (cheap visual check)
+                grid_dir = os.path.join(step_dir, "grid")
+                kid_dir = os.path.join(step_dir, "kid")
+                fid_dir = os.path.join(step_dir, "fid_milestone")
+                recon_dir = os.path.join(step_dir, "recon")
+                for d in (grid_dir, kid_dir, fid_dir, recon_dir):
+                    os.makedirs(d, exist_ok=True)
+
+                # --- model copy timing ---
+                t0m = time.perf_counter()
+                _sync()
+                model_eval = build_unet_model(spec).to(device)
+                if getattr(rt, "ema_enabled", True):
+                    ema.copy_to(model_eval)
+                else:
+                    model_eval.load_state_dict(model.state_dict())
+                _sync()
+                dt_model = time.perf_counter() - t0m
+                eval_modelcopy_s_total += dt_model
+
+                # --- eval timings ---
+                t_grid = t_kid = t_fid = t_recon = 0.0
+
                 if do_grid:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "grid"), task="grid")
-                    # (No metrics to checkpoint against; it just writes a grid.)
+                    out_grid, t_grid = timed(lambda: evaluate_diffusion(model_eval, E, q, grid_dir, task="grid"))
+                    # prefer the actual saved image path if available
+                    grid_path = (out_grid.get("details", {}).get("grid", {}) or {}).get("path")
+                    if grid_path:
+                        media["media/grid"] = grid_path  # let WandbLogger coerce to wandb.Image
+                    else:
+                        media["media/grid_dir"] = str(grid_dir)  # fallback
 
-                # KID (moderate; we’ll log it if you wire real KID later)
-                kid_now = None
                 if do_kid:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "kid"), task="kid")
-                    kid_now = out.get("kid", None)
-                    if kid_now is not None:
-                        logger.log_metrics({"val/kid": float(kid_now), "step": global_step})
-                        mlog.log(global_step, epoch=0, **{"val/kid": float(kid_now)})
+                    out_kid, t_kid = timed(lambda: evaluate_diffusion(model_eval, E, q, kid_dir, task="kid", state_dir=eval_state_dir, step=global_step))
+                    if out_kid.get("kid") is not None:
+                        scalars["val/kid"] = float(out_kid["kid"])
 
-                # FID milestone (heavy, gated internally by best-KID if you enabled that)
                 if do_fidM:
-                    out = evaluate_diffusion(model_eval, E, q, os.path.join(step_dir, "fid_milestone"), task="fid_milestone")
-                    fid_val = out.get("fid", None)
-                    if fid_val is not None:
-                        logger.log_metrics({"val/fid": float(fid_val), "step": global_step})
-                        mlog.log(global_step, epoch=0, **{"val/fid": float(fid_val)})
-
-                        # Checkpoint **on FID only** so “best” reflects an external metric
-                        metric_for_ckpt = metric_from_fid(fid_val)  # converts FID to a "higher is better" score
+                    out_fid, t_fid = timed(lambda: evaluate_diffusion(model_eval, E, q, fid_dir, task="fid_milestone", state_dir=eval_state_dir, step=global_step))
+                    if out_fid.get("fid") is not None:
+                        fid_val = float(out_fid["fid"])
+                        scalars["val/fid"] = fid_val
+                        metric_for_ckpt = metric_from_fid(fid_val)
                         best_metric = save_best_if_better(layout, model, optimizer, ema, global_step, best_metric, metric_for_ckpt)
 
-                # Recon (val diagnostic)
                 if do_recon:
-                    recon_dir = os.path.join(step_dir, "recon")
-                    recon_out = _diffusion_val_recon(
-                        model_eval=model_eval,
-                        q=q,
-                        val_loader=val_loader,
-                        recon_cfg=E.recon,
-                        device=device,
-                        out_dir=recon_dir,
-                    )
-                    if recon_out:
-                        logger.log_metrics({**recon_out, "step": global_step})
-                        mlog.log(global_step, epoch=0, **recon_out)
+                    recon_out, t_recon = timed(lambda: _diffusion_val_recon(model_eval=model_eval, q=q, val_loader=val_loader, recon_cfg=E.recon, device=device, out_dir=recon_dir))
+                    # recon_out may contain both scalars and media paths; keep clean:
+                    for k, v in recon_out.items():
+                        if isinstance(v, (int, float)):
+                            scalars[k] = float(v)
+                    recon_paths = recon_out.get("media/recon_paths", [])
+                    if recon_paths:
+                        media["media/recon"] = recon_paths
 
-                # Always keep a rolling "last" checkpoint at eval boundaries (optional but handy)
+                # totals AFTER eval ran
+                eval_grid_s_total += t_grid
+                eval_kid_s_total += t_kid
+                eval_fid_s_total += t_fid
+                eval_recon_s_total += t_recon
+
+                eval_s = dt_model + t_grid + t_kid + t_fid + t_recon
+                eval_s_total += eval_s
+
+                scalars.update(
+                    {
+                        "time/eval_s": float(eval_s),
+                        "time/eval/modelcopy_s": float(dt_model),
+                        "time/eval/grid_s": float(t_grid),
+                        "time/eval/kid_s": float(t_kid),
+                        "time/eval/fid_s": float(t_fid),
+                        "time/eval/recon_s": float(t_recon),
+                    }
+                )
+
+                # ---- single flush ----
+                logger.log_metrics({**scalars, **media}, step=global_step)
+                mlog.log(global_step, epoch=0, **scalars)
+
                 save_last(layout, model, optimizer, ema, global_step, best_metric[1])
 
             if global_step >= total_steps:
@@ -580,12 +650,15 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
     # If your final task computes FID (once you wire it), you can also log/checkpoint here:
     fid_final = out.get("fid", None)
     if fid_final is not None:
-        logger.log_metrics({"val/fid_final": float(fid_final)})
+        logger.log_metrics({"val/fid_final": float(fid_final)}, step=global_step)
         # Optional: update best on final too
         metric_for_ckpt = metric_from_fid(fid_final)
         best_metric = save_best_if_better(layout, model, optimizer, ema, global_step, best_metric, metric_for_ckpt)
 
     save_last(layout, model, optimizer, ema, global_step, best_metric[1])
+
+    run_time_s = time.perf_counter() - t0
+    train_time_s = run_time_s - eval_s_total
 
     logger.on_run_end()
 
@@ -603,6 +676,14 @@ def _run_diffusion(rt, spec, device, g, layout, train_loader, val_loader, logger
         "ckpt_last": str(layout.ckpts / "last.pt"),
         "ckpt_best": str(layout.ckpts / "best_val.pt"),
         "loss_log": str(metrics_path),
-        "run_time_s": time.perf_counter() - t0,
+        "run_time_s": run_time_s,
+        "time/eval_s_total": eval_s_total,
+        "time/eval_frac": eval_s_total / max(1e-9, run_time_s),
+        "time/train_s_est": train_time_s,
+        "time/eval/grid_s_total": eval_grid_s_total,
+        "time/eval/kid_s_total": eval_kid_s_total,
+        "time/eval/fid_s_total": eval_fid_s_total,
+        "time/eval/recon_s_total": eval_recon_s_total,
+        "time/eval/modelcopy_s_total": eval_modelcopy_s_total,
         "git_hash": git_hash,
     }

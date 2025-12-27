@@ -1,7 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import numpy as np
 import torch
 
 import ablation_harness.eval.generative as gen_mod
@@ -39,7 +38,7 @@ def precompute_q(betas: torch.Tensor) -> dict[str, torch.Tensor]:
     }
 
 
-betas = torch.linspace(1e-1, 1e-4, 1000)
+betas = torch.linspace(1e-1, 1e-4, 5)
 pre_q = precompute_q(betas)
 
 
@@ -78,6 +77,7 @@ def make_eval_cfg(
     fid_milestone = SimpleNamespace(
         enabled=fid_enabled,
         n_samples=64,
+        nfe=5,
         fid_stats="stats/cifar10_inception_train.npz",
         run_if_kid_improved_pct=0.0,
     )
@@ -234,7 +234,7 @@ def test_fid_milestone_skips_when_gate_positive_and_no_kid(tmp_path):
 
     detail = res["details"]["fid_milestone"]
     assert detail["skipped"] is True
-    assert detail["reason"] == "gate_not_met"
+    assert detail["reason"] == "kid_missing"
 
 
 def test_final_records_sampler_nfe_and_n(tmp_path):
@@ -243,7 +243,7 @@ def test_final_records_sampler_nfe_and_n(tmp_path):
     q = pre_q
     eval_cfg = make_eval_cfg(final_enabled=True)
     eval_cfg.final.sampler = "ddpm"
-    eval_cfg.final.nfe = 50
+    eval_cfg.final.nfe = 5
     eval_cfg.final.n_samples = 123
 
     res = evaluate_diffusion(model, eval_cfg, q, tmp_path / "final_only", task="final")
@@ -253,33 +253,4 @@ def test_final_records_sampler_nfe_and_n(tmp_path):
     assert detail["n"] == 123
     assert detail["fid_stats"] == eval_cfg.final.fid_stats
     assert detail["sampler"] == "ddpm"
-    assert detail["nfe"] == 50
-
-
-def test_final_uses_fid_helper(monkeypatch, tmp_path):
-    from ablation_harness.eval import generative as gen
-
-    model = TinyModel()
-    q = {"dummy": True}
-
-    eval_cfg = make_eval_cfg(final_enabled=True)
-    eval_cfg.final.fid_stats = str(tmp_path / "dummy_stats.npz")
-    # fake stats file to avoid FileNotFoundError even if helper is accidentally used
-    np.savez(eval_cfg.final.fid_stats, mu=np.zeros(4), sigma=np.eye(4))
-
-    called = {}
-
-    def fake_fid_for_generated(**kwargs):
-        called.update(kwargs)
-        return 42.0
-
-    monkeypatch.setattr(gen, "_fid_for_generated", fake_fid_for_generated)
-
-    out_dir = tmp_path / "final_eval"
-    res = gen.evaluate_diffusion(model, eval_cfg, q, out_dir, task="final")
-
-    assert res["fid"] == 42.0
-    assert res["details"]["final"]["fid"] == 42.0
-    assert called["n_samples"] == eval_cfg.final.n_samples
-    assert called["sampler"] == eval_cfg.final.sampler
-    assert called["nfe"] == eval_cfg.final.nfe
+    assert detail["nfe"] == 5

@@ -11,8 +11,10 @@ DEFAULT_OUT = Path("C:/ML/runs") if os.name == "nt" else Path.home() / "ml_runs"
 
 @dataclass
 class LossConfig:
-    weighting: str = "constant"  # "constant" or "minsnr"
+    weighting: str = "constant"  # "constant" | "minsnr" | "minsnr_norm"
     minsnr_gamma: float = 5.0
+    t_min: int = 0
+    t_max: Optional[int] = None  # None => K-1
 
 
 @dataclass

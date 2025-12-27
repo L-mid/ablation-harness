@@ -228,14 +228,34 @@ class WandbLogger:
         """Run on epoch start."""
         pass
 
+    def _coerce_media(self, v):
+        if self._wandb is None:
+            return v
+        exts = (".png", ".jpg", ".jpeg", ".webp")
+
+        if isinstance(v, str) and v.lower().endswith(exts) and os.path.exists(v):
+            return self._wandb.Image(v)
+
+        if isinstance(v, (list, tuple)) and len(v) > 0:
+            if all(isinstance(x, str) and x.lower().endswith(exts) and os.path.exists(x) for x in v):
+                return [self._wandb.Image(x) for x in v]
+
+        return v
+
     @rank_zero_only
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None) -> None:
         """Log a dict to wandb. Keeps an explicit step column."""
         if self._wandb is None:
             return
-        payload = dict(metrics)
-        if step is not None:
-            payload["trainer/step"] = step  # keep an explicit step column
+        if step is None:
+            step = int(metrics.get("step", 0))
+
+        payload = {}
+        for k, v in metrics.items():
+            if k == "step":
+                continue
+            payload[k] = self._coerce_media(v)
+
         self._wandb.log(payload, step=step)
 
     @rank_zero_only
@@ -282,6 +302,16 @@ class MultiLogger:
         """
         self._every = max(1, int(every))
         self.loggers: list["Logger"] = list(sinks)
+        self._pending_step = None
+        self._pending_metrics = {}
+
+    def _flush_pending(self):
+        if self._pending_step is None:
+            return
+        for logger in self.loggers:
+            logger.log_metrics(dict(self._pending_metrics), self._pending_step)
+        self._pending_step = None
+        self._pending_metrics = {}
 
     def on_run_start(self, cfg):
         for logger in self.loggers:
@@ -295,8 +325,20 @@ class MultiLogger:
         return (step % self._every) == 0
 
     def log_metrics(self, metrics, step=None):
-        for logger in self.loggers:
-            logger.log_metrics(metrics, step)
+        if step is None:
+            # no step => just pass through
+            for logger in self.loggers:
+                logger.log_metrics(metrics, step)
+            return
+
+        step = int(step)
+        if self._pending_step is None:
+            self._pending_step = step
+        elif step != self._pending_step:
+            self._flush_pending()
+            self._pending_step = step
+        # merge
+        self._pending_metrics.update(metrics)
 
     def log_text(self, key, text, step=None):
         for logger in self.loggers:
@@ -311,6 +353,7 @@ class MultiLogger:
             logger.on_epoch_end(epoch)
 
     def on_run_end(self):
+        self._flush_pending()
         for logger in self.loggers:
             logger.on_run_end()
 

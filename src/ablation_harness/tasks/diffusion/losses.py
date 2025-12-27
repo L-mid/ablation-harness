@@ -89,7 +89,7 @@ def _compute_minsnr_base_weight(snr: torch.Tensor, gamma: torch.Tensor) -> torch
 # ---------------------------------------------------------------------
 
 
-def _build_loss_with_weighting(
+def _build_loss_with_weighting(  # noqa C901
     loss_cfg: Optional[LossConfig],
     q: dict,
     t: torch.LongTensor,
@@ -97,7 +97,7 @@ def _build_loss_with_weighting(
     mse: torch.Tensor,  # [B]
     log_per_t_mse: bool,
     info: Dict[str, float],
-) -> Tuple[torch.Tensor, Dict[str, float]]:
+) -> Tuple[torch.Tensor, Dict[str, float]]:  # noqa C901
     """
     Apply configured weighting to per-sample MSE and aggregate logging stats.
 
@@ -119,6 +119,47 @@ def _build_loss_with_weighting(
                 mse_mean_t = mse[mask].mean().item()
                 t_val = int(unique_t[i].item())
                 info[f"mse_per_t/mse_t{t_val:04d}"] = float(mse_mean_t)
+
+        return loss, info
+
+    # -------------------------
+    # Min-SNR weighting branch
+    # -------------------------
+    if loss_cfg.weighting == "minsnr":
+        # You probably already have snr_t available from q and t.
+        # Typical: snr_t = alpha_bar[t] / (1 - alpha_bar[t])
+        a_bar_t = q["alpha_bar"][t].to(device)  # [B]
+        snr_t = a_bar_t / (1.0 - a_bar_t + 1e-8)  # [B]
+
+        gamma = float(getattr(loss_cfg, "minsnr_gamma", 5.0))
+
+        # Standard Min-SNR weights: w = min(snr, gamma) / snr
+        weights = torch.minimum(snr_t, torch.tensor(gamma, device=device)) / (snr_t + 1e-8)  # [B]
+
+        loss = (weights * mse).mean()
+
+        # Logging (only valid here because weights exists)
+        with torch.no_grad():
+            w = weights.detach()
+            info["mins_snr/snr_mean"] = float(snr_t.mean().item())
+            info["mins_snr/weight_mean"] = float(w.mean().item())
+            info["mins_snr/weight_min"] = float(w.min().item())
+            info["mins_snr/weight_max"] = float(w.max().item())
+            info["mins_snr/weight_zero_frac"] = float((w == 0).float().mean().item())
+            info["mins_snr/weight_p01"] = float(torch.quantile(w, 0.01).item())
+            info["mins_snr/weight_p50"] = float(torch.quantile(w, 0.50).item())
+            info["mins_snr/weight_p99"] = float(torch.quantile(w, 0.99).item())
+
+        if log_per_t_mse:
+            # Weighted MSE per-t (optional; keep separate keyspace)
+            unique_t, inv = torch.unique(t, return_inverse=True)
+            for i in range(unique_t.numel()):
+                mask = inv == i
+                if not mask.any():
+                    continue
+                mse_mean_t = (weights[mask] * mse[mask]).mean().item()
+                t_val = int(unique_t[i].item())
+                info[f"wmse_per_t/wmse_t{t_val:04d}"] = float(mse_mean_t)
 
         return loss, info
 
@@ -196,7 +237,19 @@ def ddpm_loss_with_info(
     K = q["betas"].numel()
 
     # Timesteps
-    t = sample_timesteps(bsz, K, device) if timesteps is None else timesteps  # [B]
+    if timesteps is None:
+        if loss_cfg is None:
+            t = sample_timesteps(bsz, K, device)
+        else:
+            t = sample_timesteps(
+                bsz,
+                K,
+                device,
+                t_min=getattr(loss_cfg, "t_min", 0),
+                t_max=getattr(loss_cfg, "t_max", None),
+            )
+    else:
+        t = timesteps
     x_t, eps = q_sample(x0, t, q)  # forward noising
 
     # Model prediction
